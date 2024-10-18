@@ -31,6 +31,9 @@ spec:
     value: ./ray-operator/Dockerfile.konflux
   - name: path-context
     value: ray-operator
+  - name: prefetch-input
+    value: |
+      [{"type": "gomod", "path": "ray-operator"}, {"type": "rpm", "path": "ray-operator"}]
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while reducing network traffic.
@@ -102,7 +105,7 @@ spec:
       description: Skip checks against built image
       name: skip-checks
       type: string
-    - default: "false"
+    - default: "true"
       description: Execute the build with network isolation
       name: hermetic
       type: string
@@ -192,6 +195,8 @@ spec:
       params:
       - name: input
         value: $(params.prefetch-input)
+      - name: dev-package-managers
+        value: "true"
       runAfter:
       - clone-repository
       taskRef:
