@@ -168,7 +168,7 @@ spec:
       name: CHAINS-GIT_COMMIT
       value: $(tasks.clone-repository.results.commit)
     tasks:
-     - name: rhoai-init
+    - name: rhoai-init
       params:
       - name: pipelinerun-name
         value: "$(context.pipelineRun.name)"
@@ -202,7 +202,7 @@ spec:
             slack_message="${alertEmoji} <${build_url}|${pipelinerun_name}> - ${build_time}"
             slack_message=$(echo -e "${slack_message}\nStatus: ${statusText} ${statusEmoji}")
 
-            echo -n "${slack_message}" > "$(results.slack-message-failure-text.path)"
+            echo -n "${slack_message}" > "$(results.slack-message-failure-text.path)" 
     - name: init
       params:
       - name: image-url
