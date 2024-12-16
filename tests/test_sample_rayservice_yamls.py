@@ -140,7 +140,6 @@ class RayServiceUpdateCREvent(CREvent):
                 self.query_rule.assert_rule(self.custom_resource_object, self.namespace)
 
 
-
 class RayServiceDeleteCREvent(CREvent):
     """CREvent for RayService deletion"""
     def exec(self):
