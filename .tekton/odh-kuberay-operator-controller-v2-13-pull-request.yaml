@@ -31,7 +31,7 @@ spec:
     value: ray-operator
   - name: prefetch-input
     value: |
-      [{"type": "gomod", "path": "ray-operator"}, {"type": "rpm", "path": "ray-operator"}]
+      [{"type": "gomod", "path": "ray-operator"}]
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while reducing network traffic.
