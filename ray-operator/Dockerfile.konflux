@@ -1,7 +1,7 @@
 # Build arguments
 ARG SOURCE_CODE=.
 
-FROM registry.access.redhat.com/ubi8/go-toolset:1.22@sha256:780ab5f3874a6e2b1e04bb3719e614e835af3f8ab150922d6e84c2f9fd2bdb27 AS builder
+FROM registry.access.redhat.com/ubi8/go-toolset:1.22@sha256:cb6d0d225da06acffdaea76081e9396e104b2e3cfb670c9d99cc3352761953c2 AS builder
 
 WORKDIR /workspace
 USER root
