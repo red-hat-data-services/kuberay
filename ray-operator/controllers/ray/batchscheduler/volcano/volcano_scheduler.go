@@ -51,7 +51,7 @@ func (v *VolcanoBatchScheduler) Name() string {
 func (v *VolcanoBatchScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, app *rayv1.RayCluster) error {
 	var minMember int32
 	var totalResource corev1.ResourceList
-	if app.Spec.EnableInTreeAutoscaling == nil || !*app.Spec.EnableInTreeAutoscaling {
+	if !utils.IsAutoscalingEnabled(app) {
 		minMember = utils.CalculateDesiredReplicas(ctx, app) + 1
 		totalResource = utils.CalculateDesiredResources(app)
 	} else {
@@ -134,7 +134,7 @@ func createPodGroup(
 	return podGroup
 }
 
-func (v *VolcanoBatchScheduler) AddMetadataToPod(app *rayv1.RayCluster, groupName string, pod *corev1.Pod) {
+func (v *VolcanoBatchScheduler) AddMetadataToPod(_ context.Context, app *rayv1.RayCluster, groupName string, pod *corev1.Pod) {
 	pod.Annotations[v1beta1.KubeGroupNameAnnotationKey] = getAppPodGroupName(app)
 	pod.Annotations[volcanov1alpha1.TaskSpecKey] = groupName
 	if queue, ok := app.ObjectMeta.Labels[QueueNameLabelKey]; ok {

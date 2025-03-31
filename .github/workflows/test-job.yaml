@@ -4,26 +4,17 @@ on:
   push:
     branches:
     - master
+    - release-*
   pull_request:
-    branches: [ master ]
+    branches:
+    - master
+    - release-*
 
 jobs:
   lint:
     name: Lint (pre-commit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.60.3
-          mv ./bin/golangci-lint /usr/local/bin/golangci-lint
-        shell: bash
-
-      - name: Install kubeconform
-        run: |
-          curl -L https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz -o kubeconform.tar.gz
-          tar -xzf kubeconform.tar.gz
-          mv kubeconform /usr/local/bin/
-
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v3
       - uses: pre-commit/action@v3.0.1
@@ -32,7 +23,7 @@ jobs:
     env:
       working-directory: ./apiserver
     name: Build Apiserver and Docker Images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Set up Go
         uses: actions/setup-go@v3
@@ -108,7 +99,7 @@ jobs:
     env:
       working-directory: ./experimental
     name: Build security proxy Binaries and Docker Images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
 
       - name: Set up Go
@@ -182,7 +173,7 @@ jobs:
     env:
       working-directory: ./ray-operator
     name: Build Operator Binaries and Docker Images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
 
     - name: Set up Go
@@ -292,7 +283,7 @@ jobs:
     env:
       working-directory: ./kubectl-plugin
     name: Build Ray Kubectl plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Set up Go
         uses: actions/setup-go@v3
@@ -400,7 +391,7 @@ jobs:
           ray_version: nightly
 
   python-client-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Python Client Test
     steps:
       - name: Set up Docker
