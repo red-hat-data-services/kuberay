@@ -1,6 +1,7 @@
 package yunikorn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,43 +19,56 @@ import (
 
 func TestPopulatePodLabels(t *testing.T) {
 	yk := &YuniKornScheduler{}
+	ctx := context.Background()
 
-	// --- case 1
-	// Ray Cluster CR has labels defined
-	job1 := "job-1-01234"
-	queue1 := "root.default"
-
-	rayCluster1 := createRayClusterWithLabels(
-		"ray-cluster-with-labels",
-		"test",
-		map[string]string{
-			RayClusterApplicationIDLabelName: job1,
-			RayClusterQueueLabelName:         queue1,
+	testCases := []struct {
+		name                   string
+		job                    string
+		queue                  string
+		clusterName            string
+		clusterNameSpace       string
+		clusterLabel           map[string]string
+		podName                string
+		expectJobLabelResult   bool
+		expectQueueLabelResult bool
+	}{
+		{
+			name:             "Ray Cluster CR has labels defined",
+			job:              "job-1-01234",
+			queue:            "root.default",
+			clusterName:      "ray-cluster-with-labels",
+			clusterNameSpace: "test",
+			clusterLabel: map[string]string{
+				RayClusterApplicationIDLabelName: "job-1-01234",
+				RayClusterQueueLabelName:         "root.default",
+			},
+			podName:                "my-pod-1",
+			expectJobLabelResult:   true,
+			expectQueueLabelResult: true,
 		},
-	)
+		{
+			name:                   "Ray Cluster CR has nothing. In this case, the pod will not be populated with the required labels",
+			job:                    "job-2-01234",
+			queue:                  "root.default",
+			clusterName:            "ray-cluster-with-labels",
+			clusterNameSpace:       "test1",
+			clusterLabel:           nil,
+			podName:                "my-pod-2",
+			expectJobLabelResult:   false,
+			expectQueueLabelResult: false,
+		},
+	}
 
-	rayPod := createPod("my-pod-1", "test")
-	yk.populatePodLabels(rayCluster1, rayPod, RayClusterApplicationIDLabelName, YuniKornPodApplicationIDLabelName)
-	yk.populatePodLabels(rayCluster1, rayPod, RayClusterQueueLabelName, YuniKornPodQueueLabelName)
-	assert.Equal(t, podLabelsContains(rayPod, YuniKornPodApplicationIDLabelName, job1), true)
-	assert.Equal(t, podLabelsContains(rayPod, YuniKornPodQueueLabelName, queue1), true)
-
-	// --- case 2
-	// Ray Cluster CR has nothing
-	// In this case, the pod will not be populated with the required labels
-	job2 := "job-2-01234"
-	queue2 := "root.default"
-
-	rayCluster2 := createRayClusterWithLabels(
-		"ray-cluster-without-labels",
-		"test1",
-		nil, // empty labels
-	)
-	rayPod3 := createPod("my-pod-2", "test")
-	yk.populatePodLabels(rayCluster2, rayPod3, RayClusterApplicationIDLabelName, YuniKornPodApplicationIDLabelName)
-	yk.populatePodLabels(rayCluster2, rayPod3, RayClusterQueueLabelName, YuniKornPodQueueLabelName)
-	assert.Equal(t, podLabelsContains(rayPod3, YuniKornPodApplicationIDLabelName, job2), false)
-	assert.Equal(t, podLabelsContains(rayPod3, YuniKornPodQueueLabelName, queue2), false)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			rayCluster := createRayClusterWithLabels(testCase.clusterName, testCase.clusterNameSpace, testCase.clusterLabel)
+			rayPod := createPod(testCase.podName, testCase.clusterNameSpace)
+			yk.populatePodLabels(ctx, rayCluster, rayPod, RayClusterApplicationIDLabelName, YuniKornPodApplicationIDLabelName)
+			yk.populatePodLabels(ctx, rayCluster, rayPod, RayClusterQueueLabelName, YuniKornPodQueueLabelName)
+			assert.Equal(t, podLabelsContains(rayPod, YuniKornPodApplicationIDLabelName, testCase.job), testCase.expectJobLabelResult)
+			assert.Equal(t, podLabelsContains(rayPod, YuniKornPodQueueLabelName, testCase.queue), testCase.expectQueueLabelResult)
+		})
+	}
 }
 
 func TestIsGangSchedulingEnabled(t *testing.T) {
@@ -71,7 +86,7 @@ func TestIsGangSchedulingEnabled(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, yk.isGangSchedulingEnabled(rayCluster1), true)
+	assert.True(t, yk.isGangSchedulingEnabled(rayCluster1))
 
 	rayCluster2 := createRayClusterWithLabels(
 		"ray-cluster-with-gang-scheduling",
@@ -83,7 +98,7 @@ func TestIsGangSchedulingEnabled(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, yk.isGangSchedulingEnabled(rayCluster2), true)
+	assert.True(t, yk.isGangSchedulingEnabled(rayCluster2))
 
 	rayCluster3 := createRayClusterWithLabels(
 		"ray-cluster-with-gang-scheduling",
@@ -94,11 +109,12 @@ func TestIsGangSchedulingEnabled(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, yk.isGangSchedulingEnabled(rayCluster3), false)
+	assert.False(t, yk.isGangSchedulingEnabled(rayCluster3))
 }
 
 func TestPopulateGangSchedulingAnnotations(t *testing.T) {
 	yk := &YuniKornScheduler{}
+	ctx := context.Background()
 
 	job1 := "job-1-01234"
 	queue1 := "root.default"
@@ -135,18 +151,18 @@ func TestPopulateGangSchedulingAnnotations(t *testing.T) {
 
 	// gang-scheduling enabled case, the plugin should populate the taskGroup annotation to the app
 	rayPod := createPod("ray-pod", "default")
-	yk.populateTaskGroupsAnnotationToPod(rayClusterWithGangScheduling, rayPod)
+	yk.populateTaskGroupsAnnotationToPod(ctx, rayClusterWithGangScheduling, rayPod)
 
 	kk, err := getTaskGroupsFromAnnotation(rayPod)
-	assert.NoError(t, err)
-	assert.Equal(t, len(kk), 2)
+	require.NoError(t, err)
+	assert.Len(t, kk, 2)
 	// verify the annotation value
 	taskGroupsSpec := rayPod.Annotations[YuniKornTaskGroupsAnnotationName]
-	assert.Equal(t, true, len(taskGroupsSpec) > 0)
+	assert.NotEmpty(t, taskGroupsSpec)
 	taskGroups := newTaskGroups()
 	err = taskGroups.unmarshalFrom(taskGroupsSpec)
-	assert.NoError(t, err)
-	assert.Equal(t, len(taskGroups.Groups), 2)
+	require.NoError(t, err)
+	assert.Len(t, taskGroups.Groups, 2)
 
 	// verify the correctness of head group
 	headGroup := taskGroups.getTaskGroup(utils.RayNodeHeadGroupLabelValue)
