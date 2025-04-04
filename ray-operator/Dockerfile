@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.22.4-bullseye as builder
+FROM golang:1.23.6-bullseye AS builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -14,6 +14,8 @@ COPY main.go main.go
 COPY apis/ apis/
 COPY controllers/ controllers/
 COPY pkg/features pkg/features
+COPY pkg/utils pkg/utils
+COPY pkg/webhooks pkg/webhooks
 
 # Build
 USER root

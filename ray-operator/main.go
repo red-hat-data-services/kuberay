@@ -21,6 +21,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -34,6 +35,7 @@ import (
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 	"github.com/ray-project/kuberay/ray-operator/pkg/features"
+	webhooks "github.com/ray-project/kuberay/ray-operator/pkg/webhooks/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -153,8 +155,17 @@ func main() {
 		combineLoggerR := zapr.NewLogger(combineLogger)
 
 		ctrl.SetLogger(combineLoggerR)
+
+		// By default, the log from kubernetes/client-go is not json format.
+		// This will apply the logger to kubernetes/client-go and change it to json format.
+		klog.SetLogger(combineLoggerR)
 	} else {
-		ctrl.SetLogger(k8szap.New(k8szap.UseFlagOptions(&opts)))
+		k8sLogger := k8szap.New(k8szap.UseFlagOptions(&opts))
+		ctrl.SetLogger(k8sLogger)
+
+		// By default, the log from kubernetes/client-go is not json format.
+		// This will apply the logger to kubernetes/client-go and change it to json format.
+		klog.SetLogger(k8sLogger)
 	}
 
 	if forcedClusterUpgrade {
@@ -202,11 +213,11 @@ func main() {
 		if watchNamespaces[0] == "" {
 			setupLog.Info("Flag watchNamespace is not set. Watch custom resources in all namespaces.")
 		} else {
-			setupLog.Info(fmt.Sprintf("Only watch custom resources in the namespace: %s", watchNamespaces[0]))
+			setupLog.Info("Only watch custom resources in the namespace.", "namespace", watchNamespaces[0])
 			options.Cache.DefaultNamespaces[watchNamespaces[0]] = cache.Config{}
 		}
 	} else {
-		setupLog.Info(fmt.Sprintf("Only watch custom resources in multiple namespaces: %v", watchNamespaces))
+		setupLog.Info("Only watch custom resources in multiple namespaces.", "namespaces", watchNamespaces)
 		for _, namespace := range watchNamespaces {
 			options.Cache.DefaultNamespaces[namespace] = cache.Config{}
 		}
@@ -231,7 +242,7 @@ func main() {
 		"unable to create controller", "controller", "RayJob")
 
 	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
-		exitOnError((&rayv1.RayCluster{}).SetupWebhookWithManager(mgr),
+		exitOnError(webhooks.SetupRayClusterWebhookWithManager(mgr),
 			"unable to create webhook", "webhook", "RayCluster")
 	}
 	// +kubebuilder:scaffold:builder
