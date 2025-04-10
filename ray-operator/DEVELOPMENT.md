@@ -63,7 +63,7 @@ make clean
 
 ```bash
 # Step 1: Create a Kind cluster
-kind create cluster --image=kindest/node:v1.24.0
+kind create cluster --image=kindest/node:v1.27.3
 
 # Step 2: Modify KubeRay source code
 # For example, add a log by adding setupLog.Info("Hello KubeRay") in the function `main` in `main.go`.
@@ -106,7 +106,7 @@ kubectl logs {YOUR_OPERATOR_POD} | grep "Hello KubeRay"
 
 ```bash
 # Step 1: Create a Kind cluster
-kind create cluster --image=kindest/node:v1.24.0
+kind create cluster --image=kindest/node:v1.27.3
 
 # Step 2: Install CRDs
 make -C ray-operator install

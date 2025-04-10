@@ -3,11 +3,11 @@ name: Lint and Test Charts
 on:
   push:
     branches:
-    - master
+    - dev
     - release-*
   pull_request:
     branches:
-    - master
+    - dev
     - release-*
 
 jobs:
