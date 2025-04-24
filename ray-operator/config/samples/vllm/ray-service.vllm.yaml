@@ -16,7 +16,7 @@ spec:
           # NOTE: num_gpus is set automatically based on TENSOR_PARALLELISM
       runtime_env:
         working_dir: "https://github.com/ray-project/kuberay/archive/master.zip"
-        pip: ["vllm==0.5.4"]
+        pip: ["vllm==0.6.1.post2"]
         env_vars:
           MODEL_ID: "meta-llama/Meta-Llama-3-8B-Instruct"
           TENSOR_PARALLELISM: "2"
@@ -37,15 +37,6 @@ spec:
               requests:
                 cpu: "2"
                 memory: "8Gi"
-            ports:
-            - containerPort: 6379
-              name: gcs-server
-            - containerPort: 8265
-              name: dashboard
-            - containerPort: 10001
-              name: client
-            - containerPort: 8000
-              name: serve
             env:
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:

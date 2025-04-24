@@ -7,6 +7,13 @@ Expand the name of the chart.
 {{- end -}}
 
 {{/*
+Allow the component label to be overridden, otherwise provide a default value.
+*/}}
+{{- define "kuberay-operator.component" -}}
+{{- default .Chart.Name .Values.componentOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
@@ -77,27 +84,6 @@ Create a template to ensure consistency for Role and ClusterRole.
 {{- define "role.consistentRules" -}}
 rules:
 - apiGroups:
-  - batch
-  resources:
-  - jobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - create
-  - get
-  - list
-  - update
-- apiGroups:
   - ""
   resources:
   - endpoints
@@ -109,6 +95,8 @@ rules:
   - ""
   resources:
   - events
+  - pods/status
+  - services
   verbs:
   - create
   - delete
@@ -134,22 +122,11 @@ rules:
   - ""
   resources:
   - pods/proxy
+  - services/status
   verbs:
   - get
   - patch
   - update
-- apiGroups:
-  - ""
-  resources:
-  - pods/status
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - ""
   resources:
@@ -163,7 +140,16 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - services
+  - services/proxy
+  verbs:
+  - create
+  - get
+  - patch
+  - update
+- apiGroups:
+  - batch
+  resources:
+  - jobs
   verbs:
   - create
   - delete
@@ -173,24 +159,17 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
+  - coordination.k8s.io
   resources:
-  - services/proxy
+  - leases
   verbs:
   - create
   - get
-  - patch
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - services/status
-  verbs:
-  - get
-  - patch
+  - list
   - update
 - apiGroups:
   - extensions
+  - networking.k8s.io
   resources:
   - ingresses
   verbs:
@@ -210,72 +189,10 @@ rules:
   - list
   - watch
 - apiGroups:
-  - networking.k8s.io
-  resources:
-  - ingresses
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - ray.io
   resources:
   - rayclusters
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ray.io
-  resources:
-  - rayclusters/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ray.io
-  resources:
-  - rayclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ray.io
-  resources:
   - rayjobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ray.io
-  resources:
-  - rayjobs/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ray.io
-  resources:
-  - rayjobs/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ray.io
-  resources:
   - rayservices
   verbs:
   - create
@@ -288,12 +205,16 @@ rules:
 - apiGroups:
   - ray.io
   resources:
+  - rayclusters/finalizers
+  - rayjobs/finalizers
   - rayservices/finalizers
   verbs:
   - update
 - apiGroups:
   - ray.io
   resources:
+  - rayclusters/status
+  - rayjobs/status
   - rayservices/status
   verbs:
   - get
@@ -332,7 +253,7 @@ rules:
   - patch
   - update
   - watch
-{{- if .batchSchedulerEnabled }}
+{{- if or .batchSchedulerEnabled (eq .batchSchedulerName "volcano") }}
 - apiGroups:
   - scheduling.volcano.sh
   resources:

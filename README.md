@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # KubeRay
 
 [![Build Status](https://github.com/ray-project/kuberay/workflows/Go-build-and-test/badge.svg)](https://github.com/ray-project/kuberay/actions)
@@ -19,8 +20,6 @@ KubeRay is a powerful, open-source Kubernetes operator that simplifies the deplo
 by some organizations to back user interfaces for KubeRay resource management.
 
 * **KubeRay Python client**: This Python client library provides APIs to handle RayCluster from your Python application.
-
-* **KubeRay CLI**: KubeRay CLI provides the ability to manage KubeRay resources through command-line interface.
 
 ## Documentation
 
@@ -80,7 +79,6 @@ The KubeRay repository only contains documentation related to the development an
 KubeRay Helm charts are hosted on the [ray-project/kuberay-helm](https://github.com/ray-project/kuberay-helm) repository.
 Please read [kuberay-operator](helm-chart/kuberay-operator/README.md) to deploy the operator and [ray-cluster](helm-chart/ray-cluster/README.md) to deploy a configurable Ray cluster.
 To deploy the optional KubeRay API Server, see [kuberay-apiserver](helm-chart/kuberay-apiserver/README.md).
-
 
 ```sh
 # Add the Helm repo

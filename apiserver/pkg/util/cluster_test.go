@@ -1,12 +1,14 @@
 package util
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"testing"
 
 	api "github.com/ray-project/kuberay/proto/go_client"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -167,6 +169,11 @@ var headGroup = api.HeadGroupSpec{
 	Labels: map[string]string{
 		"foo": "bar",
 	},
+	SecurityContext: &api.SecurityContext{
+		Capabilities: &api.Capabilities{
+			Add: []string{"SYS_PTRACE"},
+		},
+	},
 }
 
 var workerGroup = api.WorkerGroupSpec{
@@ -192,6 +199,11 @@ var workerGroup = api.WorkerGroupSpec{
 	},
 	Labels: map[string]string{
 		"foo": "bar",
+	},
+	SecurityContext: &api.SecurityContext{
+		Capabilities: &api.Capabilities{
+			Add: []string{"SYS_PTRACE"},
+		},
 	},
 }
 
@@ -234,6 +246,22 @@ var template = api.ComputeTemplate{
 	Namespace: "",
 	Cpu:       2,
 	Memory:    8,
+	Tolerations: []*api.PodToleration{
+		{
+			Key:      "blah1",
+			Operator: "Exists",
+			Effect:   "NoExecute",
+		},
+	},
+}
+
+var templateWorker = api.ComputeTemplate{
+	Name:              "",
+	Namespace:         "",
+	Cpu:               2,
+	Memory:            8,
+	Gpu:               4,
+	ExtendedResources: map[string]uint32{"vpc.amazonaws.com/efa": 32},
 	Tolerations: []*api.PodToleration{
 		{
 			Key:      "blah1",
@@ -303,6 +331,14 @@ var expectedHeadNodeEnv = []corev1.EnvVar{
 			FieldRef: &corev1.ObjectFieldSelector{
 				FieldPath: "path",
 			},
+		},
+	},
+}
+
+var expectedSecurityContext = corev1.SecurityContext{
+	Capabilities: &corev1.Capabilities{
+		Add: []corev1.Capability{
+			"SYS_PTRACE",
 		},
 	},
 }
@@ -442,7 +478,7 @@ func TestBuildVolumes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := buildVols(tt.apiVolume)
-			assert.Nil(t, err)
+			require.NoError(t, err)
 			if tt.name == "configmap test" {
 				// Sort items for comparison
 				sort.SliceStable(got[0].ConfigMap.Items, func(i, j int) bool {
@@ -511,7 +547,7 @@ func TestBuildVolumeMounts(t *testing.T) {
 
 func TestBuildHeadPodTemplate(t *testing.T) {
 	podSpec, err := buildHeadPodTemplate("2.4", &api.EnvironmentVariables{}, &headGroup, &template, false)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
 	if podSpec.Spec.ServiceAccountName != "account" {
 		t.Errorf("failed to propagate service account")
@@ -554,76 +590,185 @@ func TestBuildHeadPodTemplate(t *testing.T) {
 		t.Errorf("failed to convert labels, got %v, expected %v", podSpec.Labels, expectedLabels)
 	}
 
+	if !reflect.DeepEqual(podSpec.Spec.Containers[0].SecurityContext, &expectedSecurityContext) {
+		t.Errorf("failed to convert security context, got %v, expected %v", podSpec.Spec.SecurityContext, &expectedSecurityContext)
+	}
+
 	podSpec, err = buildHeadPodTemplate("2.4", &api.EnvironmentVariables{}, &headGroup, &template, true)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	if len(podSpec.Spec.Containers[0].Ports) != 6 {
 		t.Errorf("failed build ports")
 	}
 }
 
+func TestNewComputeTemplate(t *testing.T) {
+	configMap, err := NewComputeTemplate(&templateWorker)
+	if err != nil {
+		t.Errorf("failed to build compute template: %v", err)
+	}
+
+	assert.Equal(t, "", configMap.Data["name"])
+	assert.Equal(t, "", configMap.Data["namespace"])
+	assert.Equal(t, "2", configMap.Data["cpu"])
+	assert.Equal(t, "8", configMap.Data["memory"])
+	assert.Equal(t, "4", configMap.Data["gpu"])
+
+	var ext map[string]uint32
+	err = json.Unmarshal([]byte(configMap.Data["extended_resources"]), &ext)
+	if err != nil {
+		t.Errorf("failed to unmarshall ExtendedResources: %v", err)
+	}
+	assert.Equal(t, uint32(32), ext["vpc.amazonaws.com/efa"])
+
+	var tolerations []*api.PodToleration
+	err = json.Unmarshal([]byte(configMap.Data["tolerations"]), &tolerations)
+	if err != nil {
+		t.Errorf("failed to unmarshall tolerations: %v", err)
+	}
+	assert.Equal(t, expectedToleration.Key, tolerations[0].Key)
+	assert.Equal(t, string(expectedToleration.Operator), tolerations[0].Operator)
+	assert.Equal(t, string(expectedToleration.Effect), tolerations[0].Effect)
+}
+
+func TestGetNodeHostIP(t *testing.T) {
+	internalIP := "10.0.0.1"
+	externalIP := "12.34.56.78"
+	invalidIP := "invalid-ip-address"
+
+	tests := []struct {
+		name        string
+		expectIP    string
+		expectError string
+		addresses   []corev1.NodeAddress
+	}{
+		{
+			name: "InternalOnly",
+			addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: internalIP},
+			},
+			expectIP: internalIP,
+		},
+		{
+			name: "ExternalOnly",
+			addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeExternalIP, Address: externalIP},
+			},
+			expectIP: externalIP,
+		},
+		{
+			name: "InternalAndExternal",
+			addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeExternalIP, Address: externalIP},
+				{Type: corev1.NodeInternalIP, Address: internalIP},
+			},
+			expectIP: internalIP,
+		},
+		{
+			name: "NoValidIP",
+			addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeHostName, Address: invalidIP},
+			},
+			expectError: "host IP unknown; known addresses: [{Hostname invalid-ip-address}]",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			node := &corev1.Node{
+				Status: corev1.NodeStatus{
+					Addresses: tc.addresses,
+				},
+			}
+			ip, err := GetNodeHostIP(node)
+
+			if tc.expectError != "" {
+				assert.EqualError(t, err, tc.expectError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expectIP, ip.String())
+			}
+		})
+	}
+}
+
 func TestConvertAutoscalerOptions(t *testing.T) {
 	options, err := buildAutoscalerOptions(&testAutoscalerOptions)
-	assert.Nil(t, err)
-	assert.Equal(t, *options.IdleTimeoutSeconds, int32(25))
+	require.NoError(t, err)
+	assert.Equal(t, int32(25), *options.IdleTimeoutSeconds)
 	assert.Equal(t, (string)(*options.UpscalingMode), "Default")
 	assert.Equal(t, (string)(*options.ImagePullPolicy), "Always")
-	assert.Equal(t, len(options.Env), 1)
-	assert.Equal(t, len(options.EnvFrom), 2)
-	assert.Equal(t, len(options.VolumeMounts), 2)
-	assert.Equal(t, options.Resources.Requests.Cpu().String(), "300m")
-	assert.Equal(t, options.Resources.Requests.Memory().String(), "512Mi")
+	assert.Len(t, options.Env, 1)
+	assert.Len(t, options.EnvFrom, 2)
+	assert.Len(t, options.VolumeMounts, 2)
+	assert.Equal(t, "300m", options.Resources.Requests.Cpu().String())
+	assert.Equal(t, "512Mi", options.Resources.Requests.Memory().String())
 }
 
 func TestBuildRayCluster(t *testing.T) {
 	cluster, err := NewRayCluster(&rayCluster, map[string]*api.ComputeTemplate{"foo": &template})
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	if len(cluster.ObjectMeta.Annotations) != 1 {
 		t.Errorf("failed to propagate annotations")
 	}
 	if !(*cluster.Spec.HeadGroupSpec.EnableIngress) {
 		t.Errorf("failed to propagate create Ingress")
 	}
-	assert.Equal(t, cluster.Spec.EnableInTreeAutoscaling, (*bool)(nil))
+	assert.Equal(t, (*bool)(nil), cluster.Spec.EnableInTreeAutoscaling)
 	cluster, err = NewRayCluster(&rayClusterAutoScaler, map[string]*api.ComputeTemplate{"foo": &template})
-	assert.Nil(t, err)
-	assert.Equal(t, *cluster.Spec.EnableInTreeAutoscaling, true)
-	assert.NotEqual(t, cluster.Spec.AutoscalerOptions, nil)
+	require.NoError(t, err)
+	assert.True(t, *cluster.Spec.EnableInTreeAutoscaling)
+	assert.NotNil(t, cluster.Spec.AutoscalerOptions)
 }
 
 func TestBuilWorkerPodTemplate(t *testing.T) {
-	podSpec, err := buildWorkerPodTemplate("2.4", &api.EnvironmentVariables{}, &workerGroup, &template)
-	assert.Nil(t, err)
+	podSpec, err := buildWorkerPodTemplate("2.4", &api.EnvironmentVariables{}, &workerGroup, &templateWorker)
+	require.NoError(t, err)
 
-	if podSpec.Spec.ServiceAccountName != "account" {
-		t.Errorf("failed to propagate service account")
-	}
-	if podSpec.Spec.ImagePullSecrets[0].Name != "foo" {
-		t.Errorf("failed to propagate image pull secret")
-	}
-	if (string)(podSpec.Spec.Containers[0].ImagePullPolicy) != "Always" {
-		t.Errorf("failed to propagate image pull policy")
-	}
-	if !containsEnv(podSpec.Spec.Containers[0].Env, "foo", "bar") {
-		t.Errorf("failed to propagate environment")
-	}
-	if len(podSpec.Spec.Tolerations) != 1 {
-		t.Errorf("failed to propagate tolerations, expected 1, got %d", len(podSpec.Spec.Tolerations))
-	}
-	if !reflect.DeepEqual(podSpec.Spec.Tolerations[0], expectedToleration) {
-		t.Errorf("failed to propagate annotations, got %v, expected %v", tolerationToString(&podSpec.Spec.Tolerations[0]),
-			tolerationToString(&expectedToleration))
-	}
-	if val, exists := podSpec.Annotations["foo"]; !exists || val != "bar" {
-		t.Errorf("failed to convert annotations")
-	}
-	if !reflect.DeepEqual(podSpec.Labels, expectedLabels) {
-		t.Errorf("failed to convert labels, got %v, expected %v", podSpec.Labels, expectedLabels)
-	}
+	assert.Equal(t, "account", podSpec.Spec.ServiceAccountName, "failed to propagate service account")
+	assert.Equal(t, "foo", podSpec.Spec.ImagePullSecrets[0].Name, "failed to propagate image pull secret")
+	assert.Equal(t, corev1.PullAlways, podSpec.Spec.Containers[0].ImagePullPolicy, "failed to propagate image pull policy")
+	assert.True(t, containsEnv(podSpec.Spec.Containers[0].Env, "foo", "bar"), "failed to propagate environment")
+	assert.Len(t, podSpec.Spec.Tolerations, 1, "failed to propagate tolerations")
+	assert.Equal(t, expectedToleration, podSpec.Spec.Tolerations[0], "failed to propagate tolerations")
+	assert.Equal(t, "bar", podSpec.Annotations["foo"], "failed to convert annotations")
+	assert.Equal(t, expectedLabels, podSpec.Labels, "failed to convert labels")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "CPU_REQUEST", &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{ContainerName: "ray-worker", Resource: "requests.cpu"}}), "failed to propagate environment variable: CPU_REQUEST")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "CPU_LIMITS", &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{ContainerName: "ray-worker", Resource: "limits.cpu"}}), "failed to propagate environment variable: CPU_LIMITS")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "MEMORY_REQUESTS", &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{ContainerName: "ray-worker", Resource: "requests.memory"}}), "failed to propagate environment variable: MEMORY_REQUESTS")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "MEMORY_LIMITS", &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{ContainerName: "ray-worker", Resource: "limits.memory"}}), "failed to propagate environment variable: MEMORY_LIMITS")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "MY_POD_NAME", &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}), "failed to propagate environment variable: MY_POD_NAME")
+	assert.True(t, containsEnvValueFrom(podSpec.Spec.Containers[0].Env, "MY_POD_IP", &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}), "failed to propagate environment variable: MY_POD_IP")
+	assert.Equal(t, &expectedSecurityContext, podSpec.Spec.Containers[0].SecurityContext, "failed to convert security context")
+
+	// Check Resources
+	container := podSpec.Spec.Containers[0]
+	resources := container.Resources
+
+	assert.Equal(t, resource.MustParse("2"), resources.Limits[corev1.ResourceCPU], "CPU limit doesn't match")
+	assert.Equal(t, resource.MustParse("2"), resources.Requests[corev1.ResourceCPU], "CPU request doesn't match")
+
+	assert.Equal(t, resource.MustParse("8Gi"), resources.Limits[corev1.ResourceMemory], "Memory limit doesn't match")
+	assert.Equal(t, resource.MustParse("8Gi"), resources.Requests[corev1.ResourceMemory], "Memory request doesn't match")
+
+	assert.Equal(t, resource.MustParse("4"), resources.Limits["nvidia.com/gpu"], "GPU limit doesn't match")
+	assert.Equal(t, resource.MustParse("4"), resources.Requests["nvidia.com/gpu"], "GPU request doesn't match")
+
+	assert.Equal(t, resource.MustParse("32"), resources.Limits["vpc.amazonaws.com/efa"], "EFA limit doesn't match")
+	assert.Equal(t, resource.MustParse("32"), resources.Requests["vpc.amazonaws.com/efa"], "EFA request doesn't match")
 }
 
 func containsEnv(envs []corev1.EnvVar, key string, val string) bool {
 	for _, env := range envs {
 		if env.Name == key && env.Value == val {
+			return true
+		}
+	}
+	return false
+}
+
+func containsEnvValueFrom(envs []corev1.EnvVar, key string, valFrom *corev1.EnvVarSource) bool {
+	for _, env := range envs {
+		if env.Name == key && reflect.DeepEqual(env.ValueFrom, valFrom) {
 			return true
 		}
 	}

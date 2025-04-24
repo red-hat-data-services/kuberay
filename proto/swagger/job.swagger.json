@@ -37,6 +37,23 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "continue",
+            "description": "A continue token to request the next page of results. The token is acquired\nfrom the previous ListAllRayJobs call or can be omitted when fetching the first page.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "The maximum number of jobs to return for the requested page.\nFor backward compatibility, the default value is 0 which returns all jobs without pagination.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
         "tags": [
           "RayJobService"
         ]
@@ -67,6 +84,21 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "continue",
+            "description": "A continue token to request the next page of results. The token is acquired\nfrom the previous ListRayJobs call or can be omitted when fetching the first page.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "The maximum number of jobs to return for the requested page.\nFor backward compatibility, the default value is 0 which returns all jobs without pagination.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -218,7 +250,7 @@
         "FILE"
       ],
       "default": "DIRECTORY",
-      "description": "If indicate hostpath, we need to let user indicate which type \nthey would like to use."
+      "description": "If indicate hostpath, we need to let user indicate which type\nthey would like to use."
     },
     "VolumeMountPropagationMode": {
       "type": "string",
@@ -299,6 +331,26 @@
           "description": "Optional list of volumeMounts.  This is needed for enabling TLS for the autoscaler container."
         }
       }
+    },
+    "protoCapabilities": {
+      "type": "object",
+      "properties": {
+        "add": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Optional. Added capabilities"
+        },
+        "drop": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Optional. Removed capabilities"
+        }
+      },
+      "description": "Adds and removes POSIX capabilities from running containers."
     },
     "protoClusterSpec": {
       "type": "object",
@@ -427,6 +479,10 @@
         "imagePullPolicy": {
           "type": "string",
           "title": "Optional image pull policy We only support Always and ifNotPresent"
+        },
+        "securityContext": {
+          "$ref": "#/definitions/protoSecurityContext",
+          "description": "Optional. Configure the security context for the head container for debugging etc."
         }
       },
       "title": "Cluster HeadGroup specification",
@@ -444,6 +500,11 @@
             "$ref": "#/definitions/protoRayJob"
           },
           "readOnly": true
+        },
+        "continue": {
+          "type": "string",
+          "description": "The continue token for the next page of jobs. If it is empty, it means this is the last page.",
+          "readOnly": true
         }
       }
     },
@@ -455,6 +516,11 @@
           "items": {
             "$ref": "#/definitions/protoRayJob"
           },
+          "readOnly": true
+        },
+        "continue": {
+          "type": "string",
+          "description": "The continue token for the next page of jobs. If it is empty, it means this is the last page.",
           "readOnly": true
         }
       }
@@ -548,7 +614,7 @@
         },
         "entrypointResources": {
           "type": "string",
-          "description": "Optional entrypointResources specifies the custom resources and quantities to reserve \nfor the entrypoint command."
+          "description": "Optional entrypointResources specifies the custom resources and quantities to reserve\nfor the entrypoint command."
         },
         "createdAt": {
           "type": "string",
@@ -575,6 +641,23 @@
         "message": {
           "type": "string",
           "description": "Output. A human-readable description of the status of this operation.",
+          "readOnly": true
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Output. The time when JobDeploymentStatus transitioned from 'New' to 'Initializing'.",
+          "readOnly": true
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Output. When JobDeploymentStatus transitioned to 'Complete' status.",
+          "readOnly": true
+        },
+        "rayClusterName": {
+          "type": "string",
+          "description": "Output. Name of the ray cluster.",
           "readOnly": true
         }
       },
@@ -609,6 +692,20 @@
       "required": [
         "image"
       ]
+    },
+    "protoSecurityContext": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/definitions/protoCapabilities",
+          "description": "Optional. The capabilities to add/drop when running containers."
+        },
+        "privileged": {
+          "type": "boolean",
+          "description": "Optional. Run container in privileged mode - essentially equivalent to root on the host. Default is false."
+        }
+      },
+      "description": "SecurityContext holds security configuration that will be applied to a container.\nSome fields are present in both SecurityContext and PodSecurityContext.  When both\nare set, the values in SecurityContext take precedence."
     },
     "protoVolume": {
       "type": "object",
@@ -740,6 +837,10 @@
         "imagePullPolicy": {
           "type": "string",
           "title": "Optional image pull policy We only support Always and ifNotPresent"
+        },
+        "securityContext": {
+          "$ref": "#/definitions/protoSecurityContext",
+          "description": "Optional. Configure the security context for the worker container for debugging etc."
         }
       },
       "required": [

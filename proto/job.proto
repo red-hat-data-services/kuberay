@@ -80,19 +80,34 @@ message GetRayJobRequest {
 message ListRayJobsRequest {
   // Required. The namespace of the job to be retrieved.
   string namespace = 1 [(google.api.field_behavior) = REQUIRED];
-  // TODO: support paganation later
+
+  // A continue token to request the next page of results. The token is acquired
+  // from the previous ListRayJobs call or can be omitted when fetching the first page.
+  string continue = 2;
+  // The maximum number of jobs to return for the requested page.
+  // For backward compatibility, the default value is 0 which returns all jobs without pagination.
+  int64 limit = 3;
 }
 
 message ListRayJobsResponse {
   repeated RayJob jobs = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The continue token for the next page of jobs. If it is empty, it means this is the last page.
+  string continue = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message ListAllRayJobsRequest {
-  // TODO: support pagination later
+  // A continue token to request the next page of results. The token is acquired
+  // from the previous ListAllRayJobs call or can be omitted when fetching the first page.
+  string continue = 1;
+  // The maximum number of jobs to return for the requested page.
+  // For backward compatibility, the default value is 0 which returns all jobs without pagination.
+  int64 limit = 2;
 }
 
 message ListAllRayJobsResponse {
   repeated RayJob jobs = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The continue token for the next page of jobs. If it is empty, it means this is the last page.
+  string continue = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message DeleteRayJobRequest {
@@ -157,4 +172,10 @@ message RayJob {
   string job_deployment_status = 15 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Output. A human-readable description of the status of this operation.
   string message = 16 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Output. The time when JobDeploymentStatus transitioned from 'New' to 'Initializing'.
+  google.protobuf.Timestamp start_time = 22 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Output. When JobDeploymentStatus transitioned to 'Complete' status.
+  google.protobuf.Timestamp end_time = 23 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Output. Name of the ray cluster.
+  string ray_cluster_name = 24 [(google.api.field_behavior) = OUTPUT_ONLY];
 }

@@ -12,24 +12,20 @@ import (
 	"strings"
 	"unicode"
 
-	"k8s.io/apimachinery/pkg/api/resource"
-
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/util/json"
-
-	"k8s.io/apimachinery/pkg/util/rand"
-
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 )
 
 const (
-	RayClusterSuffix    = "-raycluster-"
 	ServeName           = "serve"
 	ClusterDomainEnvKey = "CLUSTER_DOMAIN"
 	DefaultDomainName   = "cluster.local"
@@ -104,6 +100,33 @@ func FindHeadPodReadyCondition(headPod *corev1.Pod) metav1.Condition {
 	return headPodReadyCondition
 }
 
+// FindRayClusterSuspendStatus returns the current suspend status from two conditions:
+//  1. rayv1.RayClusterSuspending
+//  2. rayv1.RayClusterSuspended
+//
+// The two conditions should not be both True at the same time. The transition logic should be the following:
+//
+//	rayv1.RayClusterSuspending:
+//	  False by default
+//	  False -> True: when `spec.Suspend` is true.
+//	  True -> False: when all Pods are deleted, set rayv1.RayClusterSuspended from False to True.
+//	rayv1.RayClusterSuspended
+//	  False by default
+//	  False -> True: when suspending transitions from True to False
+//	  True -> False: when `spec.Suspend` is false.
+//
+// If both rayv1.RayClusterSuspending and rayv1.RayClusterSuspended are False, FindRayClusterSuspendStatus returns "".
+func FindRayClusterSuspendStatus(instance *rayv1.RayCluster) rayv1.RayClusterConditionType {
+	for _, cond := range instance.Status.Conditions {
+		if cond.Type == string(rayv1.RayClusterSuspending) || cond.Type == string(rayv1.RayClusterSuspended) {
+			if cond.Status == metav1.ConditionTrue {
+				return rayv1.RayClusterConditionType(cond.Type)
+			}
+		}
+	}
+	return ""
+}
+
 // IsRunningAndReady returns true if pod is in the PodRunning Phase, if it has a condition of PodReady.
 func IsRunningAndReady(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodRunning {
@@ -130,7 +153,7 @@ func CheckRouteName(ctx context.Context, s string, n string) string {
 
 	if len(s) > maxLength {
 		// shorten the name
-		log.Info(fmt.Sprintf("route name is too long: len = %v, we will shorten it to = %v\n", len(s), maxLength))
+		log.Info("Route name is too long, we will shorten it to the max length", "nameLength", len(s), "maxLength", maxLength)
 		s = s[:maxLength]
 	}
 
@@ -138,10 +161,10 @@ func CheckRouteName(ctx context.Context, s string, n string) string {
 	return CheckName(s)
 }
 
-// PodGenerateName returns the value that should be used for a Pod's generateName
+// PodName returns the value that should be used for a Pod's Name or GenerateName
 // based on the RayCluster name and node type (head or worker).
-func PodGenerateName(prefix string, nodeType rayv1.RayNodeType) string {
-	maxPrefixLength := 50 // 63 - (max(8,6) + 5 ) // 6 to 8 char are consumed at the end with "-head-" or -worker- + 5 generated.
+func PodName(prefix string, nodeType rayv1.RayNodeType, isGenerateName bool) string {
+	maxPrefixLength := 50 // 63 - ( 8 + 5 ) // 8 char are consumed at the end with "-worker-" + 5 generated.
 
 	var podPrefix string
 	if len(prefix) <= maxPrefixLength {
@@ -150,7 +173,11 @@ func PodGenerateName(prefix string, nodeType rayv1.RayNodeType) string {
 		podPrefix = prefix[:maxPrefixLength]
 	}
 
-	return strings.ToLower(podPrefix + DashSymbol + string(nodeType) + DashSymbol)
+	result := strings.ToLower(podPrefix + DashSymbol + string(nodeType))
+	if isGenerateName {
+		result += DashSymbol
+	}
+	return result
 }
 
 // CheckName makes sure the name does not start with a numeric value and the total length is < 63 char
@@ -176,6 +203,11 @@ func CheckName(s string) string {
 	}
 
 	return s
+}
+
+// TrimJobName uses CheckLabel to trim Kubernetes job to constrains
+func TrimJobName(jobName string) string {
+	return CheckLabel(jobName)
 }
 
 // CheckLabel makes sure the label value does not start with a punctuation and the total length is < 63 char
@@ -227,9 +259,9 @@ func GetNamespace(metaData metav1.ObjectMeta) string {
 func GenerateHeadServiceName(crdType CRDType, clusterSpec rayv1.RayClusterSpec, ownerName string) (string, error) {
 	switch crdType {
 	case RayServiceCRD:
-		return CheckName(fmt.Sprintf("%s-%s-%s", ownerName, rayv1.HeadNode, "svc")), nil
+		return fmt.Sprintf("%s-%s-%s", ownerName, rayv1.HeadNode, "svc"), nil
 	case RayClusterCRD:
-		headSvcName := CheckName(fmt.Sprintf("%s-%s-%s", ownerName, rayv1.HeadNode, "svc"))
+		headSvcName := fmt.Sprintf("%s-%s-%s", ownerName, rayv1.HeadNode, "svc")
 		if clusterSpec.HeadGroupSpec.HeadService != nil && clusterSpec.HeadGroupSpec.HeadService.Name != "" {
 			headSvcName = clusterSpec.HeadGroupSpec.HeadService.Name
 		}
@@ -258,7 +290,7 @@ func ExtractRayIPFromFQDN(fqdnRayIP string) string {
 
 // GenerateServeServiceName generates name for serve service.
 func GenerateServeServiceName(serviceName string) string {
-	return CheckName(fmt.Sprintf("%s-%s-%s", serviceName, ServeName, "svc"))
+	return fmt.Sprintf("%s-%s-%s", serviceName, ServeName, "svc")
 }
 
 // GenerateServeServiceLabel generates label value for serve service selector.
@@ -278,7 +310,7 @@ func GenerateRouteName(clusterName string) string {
 
 // GenerateRayClusterName generates a ray cluster name from ray service name
 func GenerateRayClusterName(serviceName string) string {
-	return fmt.Sprintf("%s%s%s", serviceName, RayClusterSuffix, rand.String(5))
+	return fmt.Sprintf("%s-%s", serviceName, rand.String(5))
 }
 
 // GenerateRayJobId generates a ray job id for submission
@@ -295,9 +327,12 @@ func GetWorkerGroupDesiredReplicas(ctx context.Context, workerGroupSpec rayv1.Wo
 	log := ctrl.LoggerFrom(ctx)
 	// Always adhere to min/max replicas constraints.
 	var workerReplicas int32
+	if workerGroupSpec.Suspend != nil && *workerGroupSpec.Suspend {
+		return 0
+	}
 	if *workerGroupSpec.MinReplicas > *workerGroupSpec.MaxReplicas {
-		log.Info(fmt.Sprintf("minReplicas (%v) is greater than maxReplicas (%v), using maxReplicas as desired replicas. "+
-			"Please fix this to avoid any unexpected behaviors.", *workerGroupSpec.MinReplicas, *workerGroupSpec.MaxReplicas))
+		log.Info("minReplicas is greater than maxReplicas, using maxReplicas as desired replicas. "+
+			"Please fix this to avoid any unexpected behaviors.", "minReplicas", *workerGroupSpec.MinReplicas, "maxReplicas", *workerGroupSpec.MaxReplicas)
 		workerReplicas = *workerGroupSpec.MaxReplicas
 	} else if workerGroupSpec.Replicas == nil || *workerGroupSpec.Replicas < *workerGroupSpec.MinReplicas {
 		// Replicas is impossible to be nil as it has a default value assigned in the CRD.
@@ -325,6 +360,9 @@ func CalculateDesiredReplicas(ctx context.Context, cluster *rayv1.RayCluster) in
 func CalculateMinReplicas(cluster *rayv1.RayCluster) int32 {
 	count := int32(0)
 	for _, nodeGroup := range cluster.Spec.WorkerGroupSpecs {
+		if nodeGroup.Suspend != nil && *nodeGroup.Suspend {
+			continue
+		}
 		count += *nodeGroup.MinReplicas
 	}
 
@@ -335,6 +373,9 @@ func CalculateMinReplicas(cluster *rayv1.RayCluster) int32 {
 func CalculateMaxReplicas(cluster *rayv1.RayCluster) int32 {
 	count := int32(0)
 	for _, nodeGroup := range cluster.Spec.WorkerGroupSpecs {
+		if nodeGroup.Suspend != nil && *nodeGroup.Suspend {
+			continue
+		}
 		count += *nodeGroup.MaxReplicas
 	}
 
@@ -378,6 +419,9 @@ func CalculateDesiredResources(cluster *rayv1.RayCluster) corev1.ResourceList {
 	headPodResource := CalculatePodResource(cluster.Spec.HeadGroupSpec.Template.Spec)
 	desiredResourcesList = append(desiredResourcesList, headPodResource)
 	for _, nodeGroup := range cluster.Spec.WorkerGroupSpecs {
+		if nodeGroup.Suspend != nil && *nodeGroup.Suspend {
+			continue
+		}
 		podResource := CalculatePodResource(nodeGroup.Template.Spec)
 		for i := int32(0); i < *nodeGroup.Replicas; i++ {
 			desiredResourcesList = append(desiredResourcesList, podResource)
@@ -476,12 +520,12 @@ func CheckAllPodsRunning(ctx context.Context, runningPods corev1.PodList) bool {
 	}
 	for _, pod := range runningPods.Items {
 		if pod.Status.Phase != corev1.PodRunning {
-			log.Info(fmt.Sprintf("CheckAllPodsRunning: Pod is not running; Pod Name: %s; Pod Status.Phase: %v", pod.Name, pod.Status.Phase))
+			log.Info("CheckAllPodsRunning: Pod is not running.", "podName", pod.Name, "pod Status.Phase", pod.Status.Phase)
 			return false
 		}
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status != corev1.ConditionTrue {
-				log.Info(fmt.Sprintf("CheckAllPodsRunning: Pod is not ready; Pod Name: %s; Pod Status.Conditions[PodReady]: %v", pod.Name, cond))
+				log.Info("CheckAllPodsRunning: Pod is not ready.", "podName", pod.Name, "pod Status.Conditions[PodReady]", cond)
 				return false
 			}
 		}
@@ -573,4 +617,62 @@ func EnvVarByName(envName string, envVars []corev1.EnvVar) (corev1.EnvVar, bool)
 type ClientProvider interface {
 	GetDashboardClient(mgr manager.Manager) func() RayDashboardClientInterface
 	GetHttpProxyClient(mgr manager.Manager) func() RayHttpProxyClientInterface
+}
+
+func ManagedByExternalController(controllerName *string) *string {
+	if controllerName != nil && *controllerName != KubeRayController {
+		return controllerName
+	}
+	return nil
+}
+
+func IsAutoscalingEnabled(spec *rayv1.RayClusterSpec) bool {
+	return spec != nil && spec.EnableInTreeAutoscaling != nil &&
+		*spec.EnableInTreeAutoscaling
+}
+
+// Check if the RayCluster has GCS fault tolerance enabled.
+func IsGCSFaultToleranceEnabled(spec *rayv1.RayClusterSpec, annotations map[string]string) bool {
+	v, ok := annotations[RayFTEnabledAnnotationKey]
+	return (ok && strings.ToLower(v) == "true") || spec.GcsFaultToleranceOptions != nil
+}
+
+// GetRayClusterNameFromService returns the name of the RayCluster that the service points to
+func GetRayClusterNameFromService(svc *corev1.Service) string {
+	if svc == nil || svc.Spec.Selector == nil {
+		return ""
+	}
+	return svc.Spec.Selector[RayClusterLabelKey]
+}
+
+// Check where we are running. We are trying to distinguish here whether
+// this is vanilla kubernetes cluster or Openshift
+func GetClusterType() bool {
+	if os.Getenv(USE_INGRESS_ON_OPENSHIFT) == "true" {
+		// Environment is set to treat OpenShift cluster as Vanilla Kubernetes
+		return false
+	}
+
+	// The discovery package is used to discover APIs supported by a Kubernetes API server.
+	config, err := ctrl.GetConfig()
+	if err != nil || config == nil {
+		return false
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil || discoveryClient == nil {
+		return false
+	}
+
+	apiGroupList, err := discoveryClient.ServerGroups()
+	if err != nil {
+		return false
+	}
+
+	for _, group := range apiGroupList.Groups {
+		if strings.HasSuffix(group.Name, ".openshift.io") {
+			return true
+		}
+	}
+	return false
 }

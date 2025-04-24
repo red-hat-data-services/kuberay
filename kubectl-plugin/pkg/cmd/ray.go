@@ -1,21 +1,27 @@
 package cmd
 
 import (
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
 	"github.com/spf13/cobra"
 
-	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/cluster"
+	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/create"
+	kubectlraydelete "github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/delete"
+	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/get"
 	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/job"
 	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/log"
+	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/scale"
 	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/session"
+	"github.com/ray-project/kuberay/kubectl-plugin/pkg/cmd/version"
 )
 
 func NewRayCommand(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "ray",
 		Short:        "ray kubectl plugin",
-		Long:         "Manage RayCluster resources.",
+		Long:         "Manage Ray resources on Kubernetes",
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.HelpFunc()(cmd, args)
@@ -25,9 +31,19 @@ func NewRayCommand(streams genericiooptions.IOStreams) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(cluster.NewClusterCommand(streams))
-	cmd.AddCommand(session.NewSessionCommand(streams))
-	cmd.AddCommand(log.NewClusterLogCommand(streams))
-	cmd.AddCommand(job.NewJobCommand(streams))
+	configFlags := genericclioptions.NewConfigFlags(true)
+	configFlags.AddFlags(cmd.PersistentFlags())
+
+	cmdFactory := cmdutil.NewFactory(configFlags)
+
+	cmd.AddCommand(get.NewGetCommand(cmdFactory, streams))
+	cmd.AddCommand(session.NewSessionCommand(cmdFactory, streams))
+	cmd.AddCommand(log.NewClusterLogCommand(cmdFactory, streams))
+	cmd.AddCommand(job.NewJobCommand(cmdFactory, streams))
+	cmd.AddCommand(version.NewVersionCommand(cmdFactory, streams))
+	cmd.AddCommand(create.NewCreateCommand(cmdFactory, streams))
+	cmd.AddCommand(kubectlraydelete.NewDeleteCommand(cmdFactory, streams))
+	cmd.AddCommand(scale.NewScaleCommand(cmdFactory, streams))
+
 	return cmd
 }

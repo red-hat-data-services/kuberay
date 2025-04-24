@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 MD033 -->
 # Welcome
 
 <p align="center">
@@ -41,8 +42,6 @@ by some organizations to back user interfaces for KubeRay resource management.
 
 * **KubeRay Python client**: This Python client library provides APIs to handle RayCluster from your Python application.
 
-* **KubeRay CLI**: KubeRay CLI provides the ability to manage KubeRay resources through command-line interface.
-
 ## KubeRay ecosystem
 
 * [AWS Application Load Balancer](https://docs.ray.io/en/master/cluster/kubernetes/k8s-ecosystem/ingress.html#aws-application-load-balancer-alb-ingress-support-on-aws-eks)
@@ -56,7 +55,7 @@ by some organizations to back user interfaces for KubeRay resource management.
 
 **Security and isolation must be enforced outside of the Ray Cluster.** Restrict network access with Kubernetes or other external controls. Refer to [**Ray security documentation**](https://docs.ray.io/en/master/ray-security/index.html) for more guidance on what controls to implement.
 
-Please report security issues to security@anyscale.com.
+Please report security issues to <security@anyscale.com>.
 
 ## The Ray docs
 

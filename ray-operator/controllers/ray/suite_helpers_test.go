@@ -2,11 +2,10 @@ package ray
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"reflect"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
 
@@ -33,7 +32,7 @@ func listResourceFunc(ctx context.Context, workerPods *corev1.PodList, opt ...cl
 
 		count := 0
 		for _, aPod := range workerPods.Items {
-			if (reflect.DeepEqual(aPod.Status.Phase, corev1.PodRunning) || reflect.DeepEqual(aPod.Status.Phase, corev1.PodPending)) && aPod.DeletionTimestamp == nil {
+			if (reflect.DeepEqual(aPod.Status.Phase, corev1.PodRunning) || reflect.DeepEqual(aPod.Status.Phase, corev1.PodPending)) && (aPod.DeletionTimestamp == nil || len(aPod.Finalizers) != 0) {
 				count++
 			}
 		}
@@ -48,7 +47,7 @@ func getClusterState(ctx context.Context, namespace string, clusterName string) 
 		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, &cluster); err != nil {
 			log.Fatal(err)
 		}
-		return cluster.Status.State //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+		return cluster.Status.State
 	}
 }
 
@@ -79,7 +78,7 @@ func cleanUpWorkersToDelete(ctx context.Context, rayCluster *rayv1.RayCluster) {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		gomega.Eventually(
 			getResourceFunc(ctx, client.ObjectKey{Name: rayCluster.Name, Namespace: "default"}, rayCluster),
-			time.Second*9, time.Millisecond*500).Should(gomega.BeNil(), "raycluster = %v", rayCluster)
+			time.Second*9, time.Millisecond*500).Should(gomega.Succeed(), "raycluster = %v", rayCluster)
 		rayCluster.Spec.WorkerGroupSpecs[0].ScaleStrategy.WorkersToDelete = []string{}
 		return k8sClient.Update(ctx, rayCluster)
 	})
@@ -228,6 +227,21 @@ func checkServiceHealth(ctx context.Context, rayService *rayv1.RayService) func(
 	}
 }
 
+func checkServeApplicationExists(ctx context.Context, rayService *rayv1.RayService, serveAppName string) func() (bool, error) {
+	return func() (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: rayService.Name, Namespace: rayService.Namespace}, rayService); err != nil {
+			return false, err
+		}
+		for appName := range rayService.Status.ActiveServiceStatus.Applications {
+			fmt.Println("checkServeApplicationExists: appName", appName)
+			if appName == serveAppName {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+}
+
 // Update the status of the head Pod to Running.
 // We need to manually update Pod statuses otherwise they'll always be Pending.
 // envtest doesn't create a full K8s cluster. It's only the control plane.
@@ -238,7 +252,7 @@ func updateHeadPodToRunningAndReady(ctx context.Context, rayClusterName string, 
 	var instance rayv1.RayCluster
 	gomega.Eventually(
 		getResourceFunc(ctx, client.ObjectKey{Name: rayClusterName, Namespace: namespace}, &instance),
-		time.Second*3, time.Millisecond*500).Should(gomega.BeNil(), "RayCluster %v not found", rayClusterName)
+		time.Second*3, time.Millisecond*500).Should(gomega.Succeed(), "RayCluster %v not found", rayClusterName)
 
 	headPods := corev1.PodList{}
 	headLabels := common.RayClusterHeadPodsAssociationOptions(&instance).ToListOptions()
@@ -268,7 +282,7 @@ func updateWorkerPodsToRunningAndReady(ctx context.Context, rayClusterName strin
 	rayCluster := &rayv1.RayCluster{}
 	gomega.Eventually(
 		getResourceFunc(ctx, client.ObjectKey{Name: rayClusterName, Namespace: namespace}, rayCluster),
-		time.Second*3, time.Millisecond*500).Should(gomega.BeNil(), "RayCluster %v not found", rayClusterName)
+		time.Second*3, time.Millisecond*500).Should(gomega.Succeed(), "RayCluster %v not found", rayClusterName)
 
 	workerPods := corev1.PodList{}
 	workerLabels := common.RayClusterWorkerPodsAssociationOptions(rayCluster).ToListOptions()
@@ -306,13 +320,13 @@ func updateRayJobSuspendField(ctx context.Context, rayJob *rayv1.RayJob, suspend
 	})
 }
 
-func setAnnotationOnRayJob(ctx context.Context, rayJob *rayv1.RayJob, key, value string) error {
+func setJobIdOnRayJob(ctx context.Context, rayJob *rayv1.RayJob, jobId string) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		err := k8sClient.Get(ctx, client.ObjectKey{Namespace: rayJob.Namespace, Name: rayJob.Name}, rayJob)
 		if err != nil {
 			return err
 		}
-		metav1.SetMetaDataAnnotation(&rayJob.ObjectMeta, key, value)
+		rayJob.Spec.JobId = jobId
 		return k8sClient.Update(ctx, rayJob)
 	})
 }

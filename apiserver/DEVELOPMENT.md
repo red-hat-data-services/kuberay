@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # Kuberay API Server User Guide
 
 This guide covers the purpose, requirements, and deployment of the Kuberay API Server.
@@ -21,7 +22,7 @@ Typing `make dev-tools` will download and install all of them. The `make clean-d
 | Software      | Version  |                                                                    Link |
 | :-------      | :------: | -----------------------------------------------------------------------:|
 | kind          | v0.19.0  | [Install](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) |
-| golangci-lint | v1.54.1  | [Install](https://golangci-lint.run/usage/install/)                     |
+| golangci-lint | v1.64.8  | [Install](https://golangci-lint.run/usage/install/)                     |
 | kustomize     | v3.8.7   | [install](https://kubectl.docs.kubernetes.io/installation/kustomize/)   |
 | gofumpt       | v0.3.1   | To install `go install mvdan.cc/gofumpt@v0.3.1`                         |
 | goimports     | latest   | To install `go install golang.org/x/tools/cmd/goimports@latest`         |
@@ -65,7 +66,10 @@ make test
 
 There are two `make` targets provide execute the end to end test (integration between Kuberay API server and Kuberay Operator):
 
-* `make e2e-test` executes all the tests defined in the [test/e2e package](./test/e2e/). It uses the cluster defined in `~/.kube/config` to submit the workloads.
+* `make e2e-test` executes all the tests defined in the [test/e2e package](./test/e2e/). It uses the cluster defined in `~/.kube/config` to submit the workloads. Please make sure you have done the following before running this:
+    1. Install the KubeRay Operator into the cluster by `make operator-image load-operator-image deploy-operator`
+    2. Apiserver is running (see [Build](#build))
+    3. Set the `E2E_API_SERVER_URL` environment variable with value `http://localhost:8888`, as the local apiserver will be listening on port `8888`
 * `make local-e2e-test` creates a local kind cluster, builds the Kuberay operator and API server images from the current branch and deploys the operator and API server into the kind cluster. It shuts down the kind cluster upon successful execution of the end to end test. If the tests fail the cluster will be left running and will have to manually be shutdown by executing the `make clean-cluster`
 
 The `e2e` test targets use two variables to control what version of Ray images to use in the end to end tests:
@@ -97,36 +101,7 @@ To update the swagger ui files deployed with the Kuberay API server, you'll need
 * Manually run the [hack/update-swagger-ui.bash](hack/update-swagger-ui.bash) script. The script downloads the swagger ui release and copies the downloaded files
 to the [../third_party/swagger-ui](../third_party/swagger-ui/) directory. It copies the [swagger-initializer.js](../third_party/swagger-ui/swagger-initializer.js)
 to [swagger-initializer.js.backup](../third_party/swagger-ui/swagger-initializer.js.backup).
-* Update the contents of the [swagger-initializer.js](../third_party/swagger-ui/swagger-initializer.js) to set the URLs for for the individual swagger docs. The content of the file is show below:
-
-    ```javascript
-    window.onload = function() {
-    //<editor-fold desc="Changeable Configuration Block">
-
-    // the following lines will be replaced by docker/configurator, when it runs in a docker-container
-    window.ui = SwaggerUIBundle({
-        spec: location.host,
-        urls:  [{"url":"http://"+location.host+"/swagger/serve.swagger.json","name":"RayServe Service"},
-                {"url":"http://"+location.host+"/swagger/error.swagger.json","name":"Errors API"},
-                {"url":"http://"+location.host+"/swagger/job.swagger.json","name":"RayJob Service"},
-                {"url":"http://"+location.host+"/swagger/config.swagger.json","name":"ComputeTemplate Service"},
-                {"url":"http://"+location.host+"/swagger/cluster.swagger.json","name":"Cluster Service"}],
-        dom_id: '#swagger-ui',
-        deepLinking: true,
-        presets: [
-        SwaggerUIBundle.presets.apis,
-        SwaggerUIStandalonePreset
-        ],
-        plugins: [
-        SwaggerUIBundle.plugins.DownloadUrl
-        ],
-        layout: "StandaloneLayout"
-    });
-
-    //</editor-fold>
-    };
-    ```
-
+* Update the contents of the [swagger-initializer.js](../third_party/swagger-ui/swagger-initializer.js) to set the URLs for for the individual swagger docs.
 * Execute `make build-swagger` target to update the contents of the [datafile.go](pkg/swagger/datafile.go) file. This will package the content of the [swagger-ui](../third_party/swagger-ui/) directory for serving by the api server (see [func serveSwaggerUI(mux *http.ServeMux)](https://github.com/ray-project/kuberay/blob/f1067378bc99987f3eba1e5b12b4cc797465336d/apiserver/cmd/main.go#L149) in [main.go](cmd/main.go))
 
 The swagger ui is available at the following URLs:

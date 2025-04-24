@@ -211,13 +211,11 @@ func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayClus
 
 	// `portsInt` is a map of port names to port numbers, while `ports` is a list of ServicePort objects
 	portsInt := getServicePorts(rayCluster)
-	ports := []corev1.ServicePort{}
-	for name, port := range portsInt {
-		if name == utils.ServingPortName {
-			svcPort := corev1.ServicePort{Name: name, Port: port}
-			ports = append(ports, svcPort)
-			break
-		}
+	ports := make([]corev1.ServicePort, 0, 1)
+	if _, defined := portsInt[utils.ServingPortName]; defined {
+		// Only include serve port
+		svcPort := corev1.ServicePort{Name: utils.ServingPortName, Port: portsInt[utils.ServingPortName]}
+		ports = append(ports, svcPort)
 	}
 
 	if isRayService {
@@ -245,7 +243,7 @@ func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayClus
 				log.Info("port with name 'serve' already added. Ignoring user provided ports for serve service")
 				serveService.Spec.Ports = ports
 			} else {
-				ports := []corev1.ServicePort{}
+				ports := make([]corev1.ServicePort, 0, 1)
 				for _, port := range serveService.Spec.Ports {
 					if port.Name == utils.ServingPortName {
 						svcPort := corev1.ServicePort{Name: port.Name, Port: port.Port}
@@ -376,6 +374,7 @@ func setLabelsforUserProvidedService(service *corev1.Service, labels map[string]
 // getServicePorts will either user passing ports or default ports to create service.
 func getServicePorts(cluster rayv1.RayCluster) map[string]int32 {
 	ports := getPortsFromCluster(cluster)
+
 	// Assign default ports
 	if len(ports) == 0 {
 		ports = getDefaultPorts()
@@ -409,7 +408,7 @@ func getPortsFromCluster(cluster rayv1.RayCluster) map[string]int32 {
 func getDefaultPorts() map[string]int32 {
 	return map[string]int32{
 		utils.ClientPortName:    utils.DefaultClientPort,
-		utils.RedisPortName:     utils.DefaultRedisPort,
+		utils.GcsServerPortName: utils.DefaultGcsServerPort,
 		utils.DashboardPortName: utils.DefaultDashboardPort,
 		utils.MetricsPortName:   utils.DefaultMetricsPort,
 		utils.ServingPortName:   utils.DefaultServingPort,

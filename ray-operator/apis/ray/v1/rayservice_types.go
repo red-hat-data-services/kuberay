@@ -11,13 +11,21 @@ import (
 type ServiceStatus string
 
 const (
-	FailedToGetOrCreateRayCluster    ServiceStatus = "FailedToGetOrCreateRayCluster"
-	WaitForServeDeploymentReady      ServiceStatus = "WaitForServeDeploymentReady"
-	FailedToGetServeDeploymentStatus ServiceStatus = "FailedToGetServeDeploymentStatus"
-	Running                          ServiceStatus = "Running"
-	Restarting                       ServiceStatus = "Restarting"
-	FailedToUpdateServingPodLabel    ServiceStatus = "FailedToUpdateServingPodLabel"
-	FailedToUpdateService            ServiceStatus = "FailedToUpdateService"
+	// `Running` means the RayService is ready to serve requests. `NotRunning` means it is not ready.
+	// The naming is a bit confusing, but to maintain backward compatibility, we use `Running` instead of `Ready`.
+	// Since KubeRay v1.3.0, `ServiceStatus` is equivalent to the `RayServiceReady` condition.
+	// `ServiceStatus` is deprecated - please use conditions instead.
+	Running    ServiceStatus = "Running"
+	NotRunning ServiceStatus = ""
+)
+
+type RayServiceUpgradeType string
+
+const (
+	// During upgrade, NewCluster strategy will create new upgraded cluster and switch to it when it becomes ready
+	NewCluster RayServiceUpgradeType = "NewCluster"
+	// No new cluster will be created while the strategy is set to None
+	None RayServiceUpgradeType = "None"
 )
 
 // These statuses should match Ray Serve's application statuses
@@ -49,63 +57,116 @@ var DeploymentStatusEnum = struct {
 	UNHEALTHY: "UNHEALTHY",
 }
 
+type RayServiceUpgradeStrategy struct {
+	// Type represents the strategy used when upgrading the RayService. Currently supports `NewCluster` and `None`.
+	// +optional
+	Type *RayServiceUpgradeType `json:"type,omitempty"`
+}
+
 // RayServiceSpec defines the desired state of RayService
 type RayServiceSpec struct {
 	// Deprecated: This field is not used anymore. ref: https://github.com/ray-project/kuberay/issues/1685
+	// +optional
 	ServiceUnhealthySecondThreshold *int32 `json:"serviceUnhealthySecondThreshold,omitempty"`
 	// Deprecated: This field is not used anymore. ref: https://github.com/ray-project/kuberay/issues/1685
+	// +optional
 	DeploymentUnhealthySecondThreshold *int32 `json:"deploymentUnhealthySecondThreshold,omitempty"`
 	// ServeService is the Kubernetes service for head node and worker nodes who have healthy http proxy to serve traffics.
+	// +optional
 	ServeService *corev1.Service `json:"serveService,omitempty"`
+	// UpgradeStrategy defines the scaling policy used when upgrading the RayService.
+	// +optional
+	UpgradeStrategy *RayServiceUpgradeStrategy `json:"upgradeStrategy,omitempty"`
 	// Important: Run "make" to regenerate code after modifying this file
 	// Defines the applications and deployments to deploy, should be a YAML multi-line scalar string.
+	// +optional
 	ServeConfigV2  string         `json:"serveConfigV2,omitempty"`
-	RayClusterSpec RayClusterSpec `json:"rayClusterConfig,omitempty"`
+	RayClusterSpec RayClusterSpec `json:"rayClusterConfig"`
+	// If the field is set to true, the value of the label `ray.io/serve` on the head Pod should always be false.
+	// Therefore, the head Pod's endpoint will not be added to the Kubernetes Serve service.
+	// +optional
+	ExcludeHeadPodFromServeSvc bool `json:"excludeHeadPodFromServeSvc,omitempty"`
 }
 
 // RayServiceStatuses defines the observed state of RayService
 type RayServiceStatuses struct {
+	// Represents the latest available observations of a RayService's current state.
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 	// LastUpdateTime represents the timestamp when the RayService status was last updated.
+	// +optional
 	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
-	// ServiceStatus indicates the current RayService status.
-	ServiceStatus       ServiceStatus    `json:"serviceStatus,omitempty"`
+	// Deprecated: `ServiceStatus` is deprecated - use `Conditions` instead. `Running` means the RayService is ready to
+	// serve requests. An empty `ServiceStatus` means the RayService is not ready to serve requests. The definition of
+	// `ServiceStatus` is equivalent to the `RayServiceReady` condition.
+	// +optional
+	ServiceStatus ServiceStatus `json:"serviceStatus,omitempty"`
+	// +optional
 	ActiveServiceStatus RayServiceStatus `json:"activeServiceStatus,omitempty"`
 	// Pending Service Status indicates a RayCluster will be created or is being created.
+	// +optional
 	PendingServiceStatus RayServiceStatus `json:"pendingServiceStatus,omitempty"`
 	// NumServeEndpoints indicates the number of Ray Pods that are actively serving or have been selected by the serve service.
 	// Ray Pods without a proxy actor or those that are unhealthy will not be counted.
+	// +optional
 	NumServeEndpoints int32 `json:"numServeEndpoints,omitempty"`
 	// observedGeneration is the most recent generation observed for this RayService. It corresponds to the
 	// RayService's generation, which is updated on mutation by the API Server.
+	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 type RayServiceStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
-	Applications     map[string]AppStatus `json:"applicationStatuses,omitempty"`
-	RayClusterName   string               `json:"rayClusterName,omitempty"`
-	RayClusterStatus RayClusterStatus     `json:"rayClusterStatus,omitempty"`
+	// +optional
+	Applications map[string]AppStatus `json:"applicationStatuses,omitempty"`
+	// +optional
+	RayClusterName string `json:"rayClusterName,omitempty"`
+	// +optional
+	RayClusterStatus RayClusterStatus `json:"rayClusterStatus,omitempty"`
 }
 
 type AppStatus struct {
-	// Keep track of how long the service is healthy.
-	// Update when Serve deployment is healthy or first time convert to unhealthy from healthy.
-	HealthLastUpdateTime *metav1.Time                     `json:"healthLastUpdateTime,omitempty"`
-	Deployments          map[string]ServeDeploymentStatus `json:"serveDeploymentStatuses,omitempty"`
-	Status               string                           `json:"status,omitempty"`
-	Message              string                           `json:"message,omitempty"`
+	// +optional
+	Deployments map[string]ServeDeploymentStatus `json:"serveDeploymentStatuses,omitempty"`
+	// +optional
+	Status string `json:"status,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // ServeDeploymentStatus defines the current state of a Serve deployment
 type ServeDeploymentStatus struct {
-	// Keep track of how long the service is healthy.
-	// Update when Serve deployment is healthy or first time convert to unhealthy from healthy.
-	HealthLastUpdateTime *metav1.Time `json:"healthLastUpdateTime,omitempty"`
-	// Name, Status, Message are from Ray Dashboard and represent a Serve deployment's state.
-	// TODO: change status type to enum
-	Status  string `json:"status,omitempty"`
+	// +optional
+	Status string `json:"status,omitempty"`
+	// +optional
 	Message string `json:"message,omitempty"`
 }
+
+type (
+	RayServiceConditionType   string
+	RayServiceConditionReason string
+)
+
+const (
+	// RayServiceReady means users can send requests to the underlying cluster and the number of serve endpoints is greater than 0.
+	RayServiceReady RayServiceConditionType = "Ready"
+	// UpgradeInProgress means the RayService is currently performing a zero-downtime upgrade.
+	UpgradeInProgress RayServiceConditionType = "UpgradeInProgress"
+)
+
+const (
+	RayServiceInitializing         RayServiceConditionReason = "Initializing"
+	ZeroServeEndpoints             RayServiceConditionReason = "ZeroServeEndpoints"
+	NonZeroServeEndpoints          RayServiceConditionReason = "NonZeroServeEndpoints"
+	BothActivePendingClustersExist RayServiceConditionReason = "BothActivePendingClustersExist"
+	NoPendingCluster               RayServiceConditionReason = "NoPendingCluster"
+	NoActiveCluster                RayServiceConditionReason = "NoActiveCluster"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:categories=all
@@ -119,7 +180,8 @@ type RayService struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   RayServiceSpec     `json:"spec,omitempty"`
+	Spec RayServiceSpec `json:"spec,omitempty"`
+	// +optional
 	Status RayServiceStatuses `json:"status,omitempty"`
 }
 

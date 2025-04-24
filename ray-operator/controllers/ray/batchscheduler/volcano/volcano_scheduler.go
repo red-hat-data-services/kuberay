@@ -51,7 +51,7 @@ func (v *VolcanoBatchScheduler) Name() string {
 func (v *VolcanoBatchScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, app *rayv1.RayCluster) error {
 	var minMember int32
 	var totalResource corev1.ResourceList
-	if app.Spec.EnableInTreeAutoscaling == nil || !*app.Spec.EnableInTreeAutoscaling {
+	if !utils.IsAutoscalingEnabled(&app.Spec) {
 		minMember = utils.CalculateDesiredReplicas(ctx, app) + 1
 		totalResource = utils.CalculateDesiredResources(app)
 	} else {
@@ -59,23 +59,23 @@ func (v *VolcanoBatchScheduler) DoBatchSchedulingOnSubmission(ctx context.Contex
 		totalResource = utils.CalculateMinResources(app)
 	}
 
-	return v.syncPodGroup(app, minMember, totalResource)
+	return v.syncPodGroup(ctx, app, minMember, totalResource)
 }
 
 func getAppPodGroupName(app *rayv1.RayCluster) string {
 	return fmt.Sprintf("ray-%s-pg", app.Name)
 }
 
-func (v *VolcanoBatchScheduler) syncPodGroup(app *rayv1.RayCluster, size int32, totalResource corev1.ResourceList) error {
+func (v *VolcanoBatchScheduler) syncPodGroup(ctx context.Context, app *rayv1.RayCluster, size int32, totalResource corev1.ResourceList) error {
 	podGroupName := getAppPodGroupName(app)
-	if pg, err := v.volcanoClient.SchedulingV1beta1().PodGroups(app.Namespace).Get(context.TODO(), podGroupName, metav1.GetOptions{}); err != nil {
+	if pg, err := v.volcanoClient.SchedulingV1beta1().PodGroups(app.Namespace).Get(ctx, podGroupName, metav1.GetOptions{}); err != nil {
 		if !errors.IsNotFound(err) {
 			return err
 		}
 
 		podGroup := createPodGroup(app, podGroupName, size, totalResource)
 		if _, err := v.volcanoClient.SchedulingV1beta1().PodGroups(app.Namespace).Create(
-			context.TODO(), &podGroup, metav1.CreateOptions{},
+			ctx, &podGroup, metav1.CreateOptions{},
 		); err != nil {
 			if errors.IsAlreadyExists(err) {
 				v.log.Info("pod group already exists, no need to create")
@@ -90,7 +90,7 @@ func (v *VolcanoBatchScheduler) syncPodGroup(app *rayv1.RayCluster, size int32, 
 			pg.Spec.MinMember = size
 			pg.Spec.MinResources = &totalResource
 			if _, err := v.volcanoClient.SchedulingV1beta1().PodGroups(app.Namespace).Update(
-				context.TODO(), pg, metav1.UpdateOptions{},
+				ctx, pg, metav1.UpdateOptions{},
 			); err != nil {
 				v.log.Error(err, "Pod group UPDATE error!", "podGroup", podGroupName)
 				return err
@@ -134,7 +134,7 @@ func createPodGroup(
 	return podGroup
 }
 
-func (v *VolcanoBatchScheduler) AddMetadataToPod(app *rayv1.RayCluster, groupName string, pod *corev1.Pod) {
+func (v *VolcanoBatchScheduler) AddMetadataToPod(_ context.Context, app *rayv1.RayCluster, groupName string, pod *corev1.Pod) {
 	pod.Annotations[v1beta1.KubeGroupNameAnnotationKey] = getAppPodGroupName(app)
 	pod.Annotations[volcanov1alpha1.TaskSpecKey] = groupName
 	if queue, ok := app.ObjectMeta.Labels[QueueNameLabelKey]; ok {
@@ -146,7 +146,7 @@ func (v *VolcanoBatchScheduler) AddMetadataToPod(app *rayv1.RayCluster, groupNam
 	pod.Spec.SchedulerName = v.Name()
 }
 
-func (vf *VolcanoBatchSchedulerFactory) New(config *rest.Config) (schedulerinterface.BatchScheduler, error) {
+func (vf *VolcanoBatchSchedulerFactory) New(ctx context.Context, config *rest.Config) (schedulerinterface.BatchScheduler, error) {
 	vkClient, err := volcanoclient.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize volcano client with error %w", err)
@@ -158,12 +158,12 @@ func (vf *VolcanoBatchSchedulerFactory) New(config *rest.Config) (schedulerinter
 	}
 
 	if _, err := extClient.ApiextensionsV1().CustomResourceDefinitions().Get(
-		context.TODO(),
+		ctx,
 		PodGroupName,
 		metav1.GetOptions{},
 	); err != nil {
 		if _, err := extClient.ApiextensionsV1beta1().CustomResourceDefinitions().Get(
-			context.TODO(),
+			ctx,
 			PodGroupName,
 			metav1.GetOptions{},
 		); err != nil {

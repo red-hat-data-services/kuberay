@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	util "github.com/ray-project/kuberay/apiserver/pkg/util"
 	api "github.com/ray-project/kuberay/proto/go_client"
@@ -118,6 +119,13 @@ var headSpecTest = rayv1api.HeadGroupSpec{
 							},
 						},
 					},
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Add: []corev1.Capability{
+								"SYS_PTRACE",
+							},
+						},
+					},
 				},
 			},
 		},
@@ -126,24 +134,26 @@ var headSpecTest = rayv1api.HeadGroupSpec{
 
 var configMapWithoutTolerations = corev1.ConfigMap{
 	Data: map[string]string{
-		"cpu":             "4",
-		"gpu":             "0",
-		"gpu_accelerator": "",
-		"memory":          "8",
-		"name":            "head-node-template",
-		"namespace":       "max",
+		"cpu":                "4",
+		"gpu":                "0",
+		"gpu_accelerator":    "",
+		"memory":             "8",
+		"extended_resources": "{\"vpc.amazonaws.com/efa\": 32}",
+		"name":               "head-node-template",
+		"namespace":          "max",
 	},
 }
 
 var configMapWithTolerations = corev1.ConfigMap{
 	Data: map[string]string{
-		"cpu":             "4",
-		"gpu":             "0",
-		"gpu_accelerator": "",
-		"memory":          "8",
-		"name":            "head-node-template",
-		"namespace":       "max",
-		"tolerations":     "[{\"key\":\"blah1\",\"operator\":\"Exists\",\"effect\":\"NoExecute\"}]",
+		"cpu":                "4",
+		"gpu":                "0",
+		"gpu_accelerator":    "",
+		"memory":             "8",
+		"extended_resources": "{\"vpc.amazonaws.com/efa\": 32}",
+		"name":               "head-node-template",
+		"namespace":          "max",
+		"tolerations":        "[{\"key\":\"blah1\",\"operator\":\"Exists\",\"effect\":\"NoExecute\"}]",
 	},
 }
 
@@ -220,6 +230,13 @@ var workerSpecTest = rayv1api.WorkerGroupSpec{
 						{
 							Name:  "RAY_USAGE_STATS_KUBERAY_IN_USE",
 							Value: "1",
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Add: []corev1.Capability{
+								"SYS_PTRACE",
+							},
 						},
 					},
 				},
@@ -345,6 +362,30 @@ var JobExistingClusterSubmitterTest = rayv1api.RayJob{
 				RestartPolicy: corev1.RestartPolicyNever,
 			},
 		},
+	},
+}
+
+var JobWithOutputTest = rayv1api.RayJob{
+	ObjectMeta: metav1.ObjectMeta{
+		Name:      "test",
+		Namespace: "test",
+		Labels: map[string]string{
+			"ray.io/user": "user",
+		},
+	},
+	Spec: rayv1api.RayJobSpec{
+		Entrypoint:              "python /home/ray/samples/sample_code.py",
+		RuntimeEnvYAML:          "mytest yaml",
+		TTLSecondsAfterFinished: secondsValue,
+		RayClusterSpec:          &ClusterSpecTest.Spec,
+	},
+	Status: rayv1api.RayJobStatus{
+		JobStatus:           "RUNNING",
+		JobDeploymentStatus: "Initializing",
+		Message:             "Job is currently running",
+		RayClusterName:      "raycluster-sample-xxxxx",
+		StartTime:           &metav1.Time{Time: time.Date(2024, 0o7, 25, 0, 0, 0, 0, time.UTC)},
+		EndTime:             nil,
 	},
 }
 
@@ -485,6 +526,10 @@ func TestPopulateHeadNodeSpec(t *testing.T) {
 	if !reflect.DeepEqual(groupSpec.Environment, expectedHeadEnv) {
 		t.Errorf("failed to convert environment, got %v, expected %v", groupSpec.Environment, expectedHeadEnv)
 	}
+	// Cannot use deep equal since protobuf locks copying
+	if groupSpec.SecurityContext == nil || groupSpec.SecurityContext.Capabilities == nil || len(groupSpec.SecurityContext.Capabilities.Add) != 1 {
+		t.Errorf("failed to convert security context")
+	}
 }
 
 func TestPopulateWorkerNodeSpec(t *testing.T) {
@@ -505,59 +550,62 @@ func TestPopulateWorkerNodeSpec(t *testing.T) {
 	if !reflect.DeepEqual(groupSpec.Environment, expectedEnv) {
 		t.Errorf("failed to convert environment, got %v, expected %v", groupSpec.Environment, expectedEnv)
 	}
+	if groupSpec.SecurityContext == nil || groupSpec.SecurityContext.Capabilities == nil || len(groupSpec.SecurityContext.Capabilities.Add) != 1 {
+		t.Errorf("failed to convert security context")
+	}
 }
 
 func TestAutoscalerOptions(t *testing.T) {
 	options := convertAutoscalingOptions(autoscalerOptions)
-	assert.Equal(t, options.IdleTimeoutSeconds, int32(60))
-	assert.Equal(t, options.UpscalingMode, "Default")
-	assert.Equal(t, options.Image, "Some Image")
-	assert.Equal(t, options.ImagePullPolicy, "Always")
-	assert.Equal(t, options.Cpu, "500m")
-	assert.Equal(t, options.Memory, "512Mi")
-	assert.Equal(t, len(options.Envs.Values), 1)
-	assert.Equal(t, len(options.Envs.ValuesFrom), 2)
-	assert.Equal(t, len(options.Volumes), 2)
+	assert.Equal(t, int32(60), options.IdleTimeoutSeconds)
+	assert.Equal(t, "Default", options.UpscalingMode)
+	assert.Equal(t, "Some Image", options.Image)
+	assert.Equal(t, "Always", options.ImagePullPolicy)
+	assert.Equal(t, "500m", options.Cpu)
+	assert.Equal(t, "512Mi", options.Memory)
+	assert.Len(t, options.Envs.Values, 1)
+	assert.Len(t, options.Envs.ValuesFrom, 2)
+	assert.Len(t, options.Volumes, 2)
 }
 
 func TestPopulateRayClusterSpec(t *testing.T) {
-	cluster := FromCrdToApiCluster(&ClusterSpecTest, []corev1.Event{})
+	cluster := FromCrdToAPICluster(&ClusterSpecTest, []corev1.Event{})
 	if len(cluster.Annotations) != 1 {
 		t.Errorf("failed to convert cluster's annotations")
 	}
-	assert.Equal(t, cluster.ClusterSpec.EnableInTreeAutoscaling, false)
+	assert.False(t, cluster.ClusterSpec.EnableInTreeAutoscaling)
 	if cluster.ClusterSpec.AutoscalerOptions != nil {
 		t.Errorf("unexpected autoscaler annotations")
 	}
-	cluster = FromCrdToApiCluster(&ClusterSpecAutoscalerTest, []corev1.Event{})
-	assert.Equal(t, cluster.ClusterSpec.EnableInTreeAutoscaling, true)
+	cluster = FromCrdToAPICluster(&ClusterSpecAutoscalerTest, []corev1.Event{})
+	assert.True(t, cluster.ClusterSpec.EnableInTreeAutoscaling)
 	if cluster.ClusterSpec.AutoscalerOptions == nil {
 		t.Errorf("autoscaler annotations not found")
 	}
-	assert.Equal(t, cluster.ClusterSpec.AutoscalerOptions.IdleTimeoutSeconds, int32(60))
-	assert.Equal(t, cluster.ClusterSpec.AutoscalerOptions.UpscalingMode, "Default")
-	assert.Equal(t, cluster.ClusterSpec.AutoscalerOptions.ImagePullPolicy, "Always")
-	assert.Equal(t, cluster.ClusterSpec.AutoscalerOptions.Cpu, "500m")
-	assert.Equal(t, cluster.ClusterSpec.AutoscalerOptions.Memory, "512Mi")
-	assert.Equal(t, len(cluster.ClusterSpec.HeadGroupSpec.Environment.ValuesFrom), 4)
+	assert.Equal(t, int32(60), cluster.ClusterSpec.AutoscalerOptions.IdleTimeoutSeconds)
+	assert.Equal(t, "Default", cluster.ClusterSpec.AutoscalerOptions.UpscalingMode)
+	assert.Equal(t, "Always", cluster.ClusterSpec.AutoscalerOptions.ImagePullPolicy)
+	assert.Equal(t, "500m", cluster.ClusterSpec.AutoscalerOptions.Cpu)
+	assert.Equal(t, "512Mi", cluster.ClusterSpec.AutoscalerOptions.Memory)
+	assert.Len(t, cluster.ClusterSpec.HeadGroupSpec.Environment.ValuesFrom, 4)
 	for name, value := range cluster.ClusterSpec.HeadGroupSpec.Environment.ValuesFrom {
 		switch name {
 		case "REDIS_PASSWORD":
-			assert.Equal(t, value.Source.String(), "SECRET")
-			assert.Equal(t, value.Name, "redis-password-secret")
-			assert.Equal(t, value.Key, "password")
+			assert.Equal(t, "SECRET", value.Source.String())
+			assert.Equal(t, "redis-password-secret", value.Name)
+			assert.Equal(t, "password", value.Key)
 		case "CONFIGMAP":
-			assert.Equal(t, value.Source.String(), "CONFIGMAP")
-			assert.Equal(t, value.Name, "special-config")
-			assert.Equal(t, value.Key, "special.how")
+			assert.Equal(t, "CONFIGMAP", value.Source.String())
+			assert.Equal(t, "special-config", value.Name)
+			assert.Equal(t, "special.how", value.Key)
 		case "ResourceFieldRef":
-			assert.Equal(t, value.Source.String(), "RESOURCEFIELD")
-			assert.Equal(t, value.Name, "my-container")
-			assert.Equal(t, value.Key, "resource")
+			assert.Equal(t, "RESOURCEFIELD", value.Source.String())
+			assert.Equal(t, "my-container", value.Name)
+			assert.Equal(t, "resource", value.Key)
 		default:
-			assert.Equal(t, value.Source.String(), "FIELD")
-			assert.Equal(t, value.Name, "")
-			assert.Equal(t, value.Key, "path")
+			assert.Equal(t, "FIELD", value.Source.String())
+			assert.Equal(t, "", value.Name)
+			assert.Equal(t, "path", value.Key)
 		}
 	}
 }
@@ -578,14 +626,24 @@ func TestPopulateTemplate(t *testing.T) {
 		t.Errorf("failed to convert config map, got %v, expected %v", tolerationToString(template.Tolerations[0]),
 			tolerationToString(&expectedTolerations))
 	}
+
+	assert.Equal(t, uint32(4), template.Cpu, "CPU mismatch")
+	assert.Equal(t, uint32(8), template.Memory, "Memory mismatch")
+	assert.Equal(t, uint32(0), template.Gpu, "GPU mismatch")
+	assert.Equal(
+		t,
+		map[string]uint32{"vpc.amazonaws.com/efa": 32},
+		template.ExtendedResources,
+		"Extended resources mismatch",
+	)
 }
 
 func tolerationToString(toleration *api.PodToleration) string {
-	return "Key: " + toleration.Key + " Operator: " + string(toleration.Operator) + " Effect: " + string(toleration.Effect)
+	return "Key: " + toleration.Key + " Operator: " + toleration.Operator + " Effect: " + toleration.Effect
 }
 
 func TestPopulateJob(t *testing.T) {
-	job := FromCrdToApiJob(&JobNewClusterTest)
+	job := FromCrdToAPIJob(&JobNewClusterTest)
 	fmt.Printf("jobWithCluster = %#v\n", job)
 	assert.Equal(t, "test", job.Name)
 	assert.Equal(t, "test", job.Namespace)
@@ -594,7 +652,7 @@ func TestPopulateJob(t *testing.T) {
 	assert.Nil(t, job.ClusterSelector)
 	assert.NotNil(t, job.ClusterSpec)
 
-	job = FromCrdToApiJob(&JobExistingClusterTest)
+	job = FromCrdToAPIJob(&JobExistingClusterTest)
 	fmt.Printf("jobReferenceCluster = %#v\n", job)
 	assert.Equal(t, "test", job.Name)
 	assert.Equal(t, "test", job.Namespace)
@@ -603,7 +661,7 @@ func TestPopulateJob(t *testing.T) {
 	assert.NotNil(t, job.ClusterSelector)
 	assert.Nil(t, job.ClusterSpec)
 
-	job = FromCrdToApiJob(&JobExistingClusterSubmitterTest)
+	job = FromCrdToAPIJob(&JobExistingClusterSubmitterTest)
 	fmt.Printf("jobReferenceCluster = %#v\n", job)
 	assert.Equal(t, "test", job.Name)
 	assert.Equal(t, "test", job.Namespace)
@@ -613,4 +671,13 @@ func TestPopulateJob(t *testing.T) {
 	assert.Nil(t, job.ClusterSpec)
 	assert.Equal(t, "image", job.JobSubmitter.Image)
 	assert.Equal(t, "2", job.JobSubmitter.Cpu)
+
+	job = FromCrdToAPIJob(&JobWithOutputTest)
+	fmt.Printf("jobWithOutput = %#v\n", job)
+	assert.Equal(t, time.Date(2024, 0o7, 25, 0, 0, 0, 0, time.UTC), job.StartTime.AsTime())
+	assert.Nil(t, job.EndTime)
+	assert.Equal(t, "RUNNING", job.JobStatus)
+	assert.Equal(t, "Initializing", job.JobDeploymentStatus)
+	assert.Equal(t, "Job is currently running", job.Message)
+	assert.Equal(t, "raycluster-sample-xxxxx", job.RayClusterName)
 }
