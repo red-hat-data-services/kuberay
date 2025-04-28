@@ -19,9 +19,7 @@ type RayClusterSpec struct {
 	// A suspended RayCluster will have head pods and worker pods deleted.
 	Suspend                *bool             `json:"suspend,omitempty"`
 	HeadServiceAnnotations map[string]string `json:"headServiceAnnotations,omitempty"`
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// HeadGroupSpecs are the spec for the head pod
+	// HeadGroupSpec is the spec for the head pod
 	HeadGroupSpec HeadGroupSpec `json:"headGroupSpec"`
 	// RayVersion is used to determine the command for the Kubernetes Job managed by RayJob
 	RayVersion string `json:"rayVersion,omitempty"`
@@ -31,16 +29,16 @@ type RayClusterSpec struct {
 
 // HeadGroupSpec are the spec for the head pod
 type HeadGroupSpec struct {
-	// ServiceType is Kubernetes service type of the head service. it will be used by the workers to connect to the head pod
-	ServiceType corev1.ServiceType `json:"serviceType,omitempty"`
+	// Template is the exact pod template used in K8s depoyments, statefulsets, etc.
+	Template corev1.PodTemplateSpec `json:"template"`
 	// HeadService is the Kubernetes service of the head pod.
 	HeadService *corev1.Service `json:"headService,omitempty"`
 	// EnableIngress indicates whether operator should create ingress object for head service or not.
 	EnableIngress *bool `json:"enableIngress,omitempty"`
 	// RayStartParams are the params of the start command: node-manager-port, object-store-memory, ...
 	RayStartParams map[string]string `json:"rayStartParams"`
-	// Template is the exact pod template used in K8s depoyments, statefulsets, etc.
-	Template corev1.PodTemplateSpec `json:"template"`
+	// ServiceType is Kubernetes service type of the head service. it will be used by the workers to connect to the head pod
+	ServiceType corev1.ServiceType `json:"serviceType,omitempty"`
 }
 
 // WorkerGroupSpec are the specs for the worker pods
