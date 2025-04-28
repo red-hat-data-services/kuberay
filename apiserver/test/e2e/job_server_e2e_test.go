@@ -86,7 +86,7 @@ func TestCreateJobWithDisposableClusters(t *testing.T) {
 					Name:                     tCtx.GetNextName(),
 					Namespace:                tCtx.GetNamespaceName(),
 					User:                     "natacha",
-					Version:                  "2.9.0",
+					Version:                  tCtx.GetRayVersion(),
 					Entrypoint:               "python /home/ray/samples/counter_sample.py",
 					RuntimeEnv:               "pip:\n  - requests==2.26.0\n  - pendulum==2.1.2\nenv_vars:\n  counter_name: test_counter\n",
 					ShutdownAfterJobFinishes: true,
@@ -105,7 +105,7 @@ func TestCreateJobWithDisposableClusters(t *testing.T) {
 					Name:                     tCtx.GetNextName(),
 					Namespace:                tCtx.GetNamespaceName(),
 					User:                     "natacha",
-					Version:                  "2.9.0",
+					Version:                  tCtx.GetRayVersion(),
 					Entrypoint:               "python /home/ray/samples/fail_fast.py",
 					ShutdownAfterJobFinishes: true,
 					ClusterSpec:              clusterSpec,
@@ -196,7 +196,7 @@ func TestCreateJobWithDisposableClusters(t *testing.T) {
 					Namespace:                tCtx.GetNamespaceName(),
 					Name:                     tCtx.GetNextName(),
 					User:                     "bullwinkle",
-					Version:                  "2.9.0",
+					Version:                  tCtx.GetRayVersion(),
 					Entrypoint:               "python /home/ray/samples/counter_sample.py",
 					RuntimeEnv:               "pip:\n  - requests==2.26.0\n  - pendulum==2.1.2\nenv_vars:\n  counter_name: test_counter\n",
 					ShutdownAfterJobFinishes: true,
@@ -333,7 +333,7 @@ func TestGetJobsInNamespace(t *testing.T) {
 	require.NoError(t, err, "No error expected")
 	require.Nil(t, actualRpcStatus, "No RPC status expected")
 	require.NotNil(t, response, "A response is expected")
-	require.NotEmpty(t, response.Jobs, "A list of compute templates is required")
+	require.NotEmpty(t, response.Jobs, "A list of jobs is required")
 	foundName := false
 	for _, job := range response.Jobs {
 		if testJobRequest.Job.Name == job.Name && tCtx.GetNamespaceName() == job.Namespace {
@@ -444,7 +444,7 @@ func TestCreateJobWithClusterSelector(t *testing.T) {
 					Name:                    tCtx.GetNextName(),
 					Namespace:               tCtx.GetNamespaceName(),
 					User:                    "r2d2",
-					Version:                 "2.9.0",
+					Version:                 tCtx.GetRayVersion(),
 					Entrypoint:              "python /home/ray/samples/counter_sample.py",
 					Metadata:                map[string]string{},
 					RuntimeEnv:              "pip:\n  - requests==2.26.0\n  - pendulum==2.1.2\nenv_vars:\n  counter_name: test_counter\n",
@@ -466,7 +466,7 @@ func TestCreateJobWithClusterSelector(t *testing.T) {
 					Name:                     tCtx.GetNextName(),
 					Namespace:                tCtx.GetNamespaceName(),
 					User:                     "r2d2",
-					Version:                  "2.9.0",
+					Version:                  tCtx.GetRayVersion(),
 					Entrypoint:               "python /home/ray/samples/fail_fast.py",
 					RuntimeEnv:               "pip:\n  - requests==2.26.0\n  - pendulum==2.1.2\nenv_vars:\n  counter_name: test_counter\n",
 					ShutdownAfterJobFinishes: true,
@@ -532,7 +532,7 @@ func createTestJob(t *testing.T, tCtx *End2EndTestingContext) *api.CreateRayJobR
 			Name:                     tCtx.GetNextName(),
 			Namespace:                tCtx.GetNamespaceName(),
 			User:                     "natacha",
-			Version:                  "2.9.0",
+			Version:                  tCtx.GetRayVersion(),
 			Entrypoint:               "python /home/ray/samples/counter_sample.py",
 			RuntimeEnv:               "pip:\n  - requests==2.26.0\n  - pendulum==2.1.2\nenv_vars:\n  counter_name: test_counter\n",
 			ShutdownAfterJobFinishes: true,
