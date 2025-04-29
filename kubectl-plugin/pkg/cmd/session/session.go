@@ -3,7 +3,10 @@ package session
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ray-project/kuberay/kubectl-plugin/pkg/util"
 	"github.com/ray-project/kuberay/kubectl-plugin/pkg/util/client"
@@ -11,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
-	"k8s.io/kubectl/pkg/cmd/portforward"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/util/templates"
 )
@@ -52,16 +54,16 @@ var (
 	`)
 
 	sessionExample = templates.Examples(`
-		# Without specifying the resource type, forward local ports to the RayCluster resource
+		# Without specifying the resource type, forward local ports to the Ray cluster
 		kubectl ray session my-raycluster
 
-		# Forward local ports to the RayCluster resource
+		# Forward local ports to the Ray cluster
 		kubectl ray session raycluster/my-raycluster
 
-		# Forward local ports to the RayCluster used for the RayJob resource
+		# Forward local ports to the Ray cluster used for the Ray job
 		kubectl ray session rayjob/my-rayjob
 
-		# Forward local ports to the RayCluster used for the RayService resource
+		# Forward local ports to the Ray cluster used for the RayService resource
 		kubectl ray session rayservice/my-rayservice
 	`)
 )
@@ -141,8 +143,8 @@ func (options *SessionOptions) Validate() error {
 	if err != nil {
 		return fmt.Errorf("Error retrieving raw config: %w", err)
 	}
-	if len(config.CurrentContext) == 0 {
-		return fmt.Errorf("no context is currently set, use %q to select a new one", "kubectl config use-context <context>")
+	if !util.HasKubectlContext(config, options.configFlags) {
+		return fmt.Errorf("no context is currently set, use %q or %q to select a new one", "--context", "kubectl config use-context <context>")
 	}
 	return nil
 }
@@ -171,21 +173,32 @@ func (options *SessionOptions) Run(ctx context.Context, factory cmdutil.Factory)
 		return fmt.Errorf("unsupported resource type: %s", options.ResourceType)
 	}
 
-	portForwardCmd := portforward.NewCmdPortForward(factory, *options.ioStreams)
-	args := []string{"service/" + svcName}
+	kubectlArgs := []string{"port-forward", "-n", options.Namespace, "service/" + svcName}
 	for _, appPort := range appPorts {
-		args = append(args, fmt.Sprintf("%d:%d", appPort.port, appPort.port))
+		kubectlArgs = append(kubectlArgs, fmt.Sprintf("%d:%d", appPort.port, appPort.port))
 	}
-	portForwardCmd.SetArgs(args)
 
 	for _, appPort := range appPorts {
 		fmt.Printf("%s: http://localhost:%d\n", appPort.name, appPort.port)
 	}
 	fmt.Println()
 
-	if err := portForwardCmd.ExecuteContext(ctx); err != nil {
-		return fmt.Errorf("failed to port-forward: %w", err)
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			const reconnectDelay = 100
+			var err error
+			portforwardCmd := exec.Command("kubectl", kubectlArgs...)
+			if err = portforwardCmd.Run(); err == nil {
+				return
+			}
+			fmt.Printf("failed to port-forward: %v, try to reconnect after %d miliseconds...\n", err, reconnectDelay)
+			time.Sleep(reconnectDelay * time.Millisecond)
+		}
+	}()
 
+	wg.Wait()
 	return nil
 }
