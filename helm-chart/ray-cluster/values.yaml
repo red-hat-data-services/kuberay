@@ -7,7 +7,7 @@
 
 image:
   repository: rayproject/ray
-  tag: 2.9.0
+  tag: 2.41.0
   pullPolicy: IfNotPresent
 
 nameOverride: "kuberay"
@@ -26,7 +26,7 @@ common:
 head:
   # rayVersion determines the autoscaler's image version.
   # It should match the Ray version in the image of the containers.
-  # rayVersion: 2.9.0
+  # rayVersion: 2.41.0
   # If enableInTreeAutoscaling is true, the autoscaler sidecar will be added to the Ray head pod.
   # Ray autoscaler integration is supported only for Ray versions >= 1.11.0
   # Ray autoscaler integration is Beta with KubeRay >= 0.3.0 and Ray >= 2.0.0.
@@ -57,8 +57,7 @@ head:
   # in the headGroupSpec. See https://github.com/ray-project/kuberay/pull/1128 for more details.
   serviceAccountName: ""
   restartPolicy: ""
-  rayStartParams:
-    dashboard-host: '0.0.0.0'
+  rayStartParams: {}
   # containerEnv specifies environment variables for the Ray container,
   # Follows standard K8s container env schema.
   containerEnv: []
@@ -115,6 +114,19 @@ head:
     # metadata:
     #   annotations:
     #     prometheus.io/scrape: "true"
+
+  # Custom pod DNS configuration
+  # See https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+  # dnsConfig:
+  #   nameservers:
+  #     - 8.8.8.8
+  #   searches:
+  #     - example.local
+  #   options:
+  #     - name: ndots
+  #       value: "2"
+  #     - name: edns0
+  topologySpreadConstraints: {}
 
 
 worker:
@@ -178,6 +190,20 @@ worker:
   # container command for worker Pod.
   command: []
   args: []
+  topologySpreadConstraints: {}
+
+
+  # Custom pod DNS configuration
+  # See https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+  # dnsConfig:
+  #   nameservers:
+  #     - 8.8.8.8
+  #   searches:
+  #     - example.local
+  #   options:
+  #     - name: ndots
+  #       value: "2"
+  #     - name: edns0
 
 # The map's key is used as the groupName.
 # For example, key:small-group in the map below
@@ -240,6 +266,22 @@ additionalWorkerGroups:
     # container command for worker Pod.
     command: []
     args: []
+
+    # Topology Spread Constraints for worker pods
+    # See: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+    topologySpreadConstraints: {}
+
+    # Custom pod DNS configuration
+    # See https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+    # dnsConfig:
+    #   nameservers:
+    #     - 8.8.8.8
+    #   searches:
+    #     - example.local
+    #   options:
+    #     - name: ndots
+    #       value: "2"
+    #     - name: edns0
 
 # Configuration for Head's Kubernetes Service
 service:

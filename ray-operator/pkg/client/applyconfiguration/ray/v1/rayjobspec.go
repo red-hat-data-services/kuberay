@@ -7,7 +7,7 @@ import (
 	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
-// RayJobSpecApplyConfiguration represents an declarative configuration of the RayJobSpec type for use
+// RayJobSpecApplyConfiguration represents a declarative configuration of the RayJobSpec type for use
 // with apply.
 type RayJobSpecApplyConfiguration struct {
 	ActiveDeadlineSeconds    *int32                                    `json:"activeDeadlineSeconds,omitempty"`
@@ -17,6 +17,8 @@ type RayJobSpecApplyConfiguration struct {
 	Metadata                 map[string]string                         `json:"metadata,omitempty"`
 	ClusterSelector          map[string]string                         `json:"clusterSelector,omitempty"`
 	SubmitterConfig          *SubmitterConfigApplyConfiguration        `json:"submitterConfig,omitempty"`
+	ManagedBy                *string                                   `json:"managedBy,omitempty"`
+	DeletionPolicy           *rayv1.DeletionPolicy                     `json:"deletionPolicy,omitempty"`
 	Entrypoint               *string                                   `json:"entrypoint,omitempty"`
 	RuntimeEnvYAML           *string                                   `json:"runtimeEnvYAML,omitempty"`
 	JobId                    *string                                   `json:"jobId,omitempty"`
@@ -29,7 +31,7 @@ type RayJobSpecApplyConfiguration struct {
 	Suspend                  *bool                                     `json:"suspend,omitempty"`
 }
 
-// RayJobSpecApplyConfiguration constructs an declarative configuration of the RayJobSpec type for use with
+// RayJobSpecApplyConfiguration constructs a declarative configuration of the RayJobSpec type for use with
 // apply.
 func RayJobSpec() *RayJobSpecApplyConfiguration {
 	return &RayJobSpecApplyConfiguration{}
@@ -100,6 +102,22 @@ func (b *RayJobSpecApplyConfiguration) WithClusterSelector(entries map[string]st
 // If called multiple times, the SubmitterConfig field is set to the value of the last call.
 func (b *RayJobSpecApplyConfiguration) WithSubmitterConfig(value *SubmitterConfigApplyConfiguration) *RayJobSpecApplyConfiguration {
 	b.SubmitterConfig = value
+	return b
+}
+
+// WithManagedBy sets the ManagedBy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ManagedBy field is set to the value of the last call.
+func (b *RayJobSpecApplyConfiguration) WithManagedBy(value string) *RayJobSpecApplyConfiguration {
+	b.ManagedBy = &value
+	return b
+}
+
+// WithDeletionPolicy sets the DeletionPolicy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DeletionPolicy field is set to the value of the last call.
+func (b *RayJobSpecApplyConfiguration) WithDeletionPolicy(value rayv1.DeletionPolicy) *RayJobSpecApplyConfiguration {
+	b.DeletionPolicy = &value
 	return b
 }
 
