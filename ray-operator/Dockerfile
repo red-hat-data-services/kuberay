@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.23.6-bullseye AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.23 AS builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
