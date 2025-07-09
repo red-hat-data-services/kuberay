@@ -1,4 +1,4 @@
-package e2e
+package e2erayservice
 
 import (
 	"sync"
@@ -6,7 +6,6 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
@@ -29,15 +28,15 @@ func TestStaticRayService(t *testing.T) {
 	configMapAC := newConfigMap(namespace.Name, files(test, "locust_runner.py"))
 	configMap, err := test.Client().Core().CoreV1().ConfigMaps(namespace.Name).Apply(test.Ctx(), configMapAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
+	LogWithTimestamp(test.T(), "Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
 
 	// Create the RayService for testing
 	KubectlApplyYAML(test, rayserviceYamlFile, namespace.Name)
 	rayService, err := GetRayService(test, namespace.Name, "test-rayservice")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
 
-	test.T().Logf("Waiting for RayService %s/%s to running", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Waiting for RayService %s/%s to be ready", rayService.Namespace, rayService.Name)
 	g.Eventually(RayService(test, rayService.Namespace, rayService.Name), TestTimeoutMedium).
 		Should(WithTransform(IsRayServiceReady, BeTrue()))
 
@@ -45,7 +44,7 @@ func TestStaticRayService(t *testing.T) {
 	KubectlApplyYAML(test, locustYamlFile, namespace.Name)
 	locustCluster, err := GetRayCluster(test, namespace.Name, "locust-cluster")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
+	LogWithTimestamp(test.T(), "Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
 
 	g.Eventually(RayCluster(test, locustCluster.Namespace, locustCluster.Name), TestTimeoutMedium).
 		Should(WithTransform(RayClusterState, Equal(rayv1.Ready)))
@@ -53,7 +52,7 @@ func TestStaticRayService(t *testing.T) {
 
 	headPod, err := GetHeadPod(test, locustCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Found head pod %s/%s", headPod.Namespace, headPod.Name)
+	LogWithTimestamp(test.T(), "Found head pod %s/%s", headPod.Namespace, headPod.Name)
 
 	// Install Locust in the head Pod
 	ExecPodCmd(test, headPod, common.RayHeadContainer, []string{"pip", "install", "locust==2.32.10"})
@@ -79,15 +78,15 @@ func TestAutoscalingRayService(t *testing.T) {
 	configMapAC := newConfigMap(namespace.Name, files(test, "locust_runner.py"))
 	configMap, err := test.Client().Core().CoreV1().ConfigMaps(namespace.Name).Apply(test.Ctx(), configMapAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
+	LogWithTimestamp(test.T(), "Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
 
 	// Create the RayService for testing
 	KubectlApplyYAML(test, rayserviceYamlFile, namespace.Name)
 	rayService, err := GetRayService(test, namespace.Name, "test-rayservice")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
 
-	test.T().Logf("Waiting for RayService %s/%s to running", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Waiting for RayService %s/%s to be ready", rayService.Namespace, rayService.Name)
 	g.Eventually(RayService(test, rayService.Namespace, rayService.Name), TestTimeoutMedium).
 		Should(WithTransform(IsRayServiceReady, BeTrue()))
 
@@ -98,13 +97,17 @@ func TestAutoscalingRayService(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	// Check the number of worker pods is correct when RayService is steady
-	g.Eventually(WorkerPods(test, rayServiceUnderlyingRayCluster), TestTimeoutShort).Should(HaveLen(numberOfPodsWhenSteady))
+	// TODO (rueian): with the current Ray version (2.43.0), autoscaler can have races with the scheduler and that causes overprovisioning.
+	// So, we use TestTimeoutLong for here to wait for the autoscaler to do a scale down in the case of overprovisioning.
+	// We may revisit the timeout again if the issue has been solved. See: https://github.com/ray-project/kuberay/issues/2981#issuecomment-2686172278
+	g.Eventually(WorkerPods(test, rayServiceUnderlyingRayCluster), TestTimeoutLong).Should(HaveLen(numberOfPodsWhenSteady),
+		"The WorkerGroupSpec.Replicas is %d", *rayServiceUnderlyingRayCluster.Spec.WorkerGroupSpecs[0].Replicas)
 
 	// Create Locust RayCluster
 	KubectlApplyYAML(test, locustYamlFile, namespace.Name)
 	locustCluster, err := GetRayCluster(test, namespace.Name, "locust-cluster")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
+	LogWithTimestamp(test.T(), "Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
 
 	g.Eventually(RayCluster(test, locustCluster.Namespace, locustCluster.Name), TestTimeoutMedium).
 		Should(WithTransform(RayClusterState, Equal(rayv1.Ready)))
@@ -112,7 +115,7 @@ func TestAutoscalingRayService(t *testing.T) {
 
 	headPod, err := GetHeadPod(test, locustCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Found head pod %s/%s", headPod.Namespace, headPod.Name)
+	LogWithTimestamp(test.T(), "Found head pod %s/%s", headPod.Namespace, headPod.Name)
 
 	// Install Locust in the head Pod
 	ExecPodCmd(test, headPod, common.RayHeadContainer, []string{"pip", "install", "locust==2.32.10"})
@@ -145,15 +148,15 @@ func TestRayServiceZeroDowntimeUpgrade(t *testing.T) {
 	configMapAC := newConfigMap(namespace.Name, files(test, "locust_runner.py"))
 	configMap, err := test.Client().Core().CoreV1().ConfigMaps(namespace.Name).Apply(test.Ctx(), configMapAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
+	LogWithTimestamp(test.T(), "Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
 
 	// Create the RayService for testing
 	KubectlApplyYAML(test, rayserviceYamlFile, namespace.Name)
 	rayService, err := GetRayService(test, namespace.Name, "test-rayservice")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
 
-	test.T().Logf("Waiting for RayService %s/%s to running", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Waiting for RayService %s/%s to be ready", rayService.Namespace, rayService.Name)
 	g.Eventually(RayService(test, rayService.Namespace, rayService.Name), TestTimeoutMedium).
 		Should(WithTransform(IsRayServiceReady, BeTrue()))
 
@@ -161,7 +164,7 @@ func TestRayServiceZeroDowntimeUpgrade(t *testing.T) {
 	KubectlApplyYAML(test, locustYamlFile, namespace.Name)
 	locustCluster, err := GetRayCluster(test, namespace.Name, "locust-cluster")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
+	LogWithTimestamp(test.T(), "Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
 
 	g.Eventually(RayCluster(test, locustCluster.Namespace, locustCluster.Name), TestTimeoutMedium).
 		Should(WithTransform(RayClusterState, Equal(rayv1.Ready)))
@@ -169,7 +172,7 @@ func TestRayServiceZeroDowntimeUpgrade(t *testing.T) {
 
 	headPod, err := GetHeadPod(test, locustCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Found head pod %s/%s", headPod.Namespace, headPod.Name)
+	LogWithTimestamp(test.T(), "Found head pod %s/%s", headPod.Namespace, headPod.Name)
 
 	// Install Locust in the head Pod
 	ExecPodCmd(test, headPod, common.RayHeadContainer, []string{"pip", "install", "locust==2.32.10"})
@@ -181,10 +184,10 @@ func TestRayServiceZeroDowntimeUpgrade(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		test.T().Logf("Waiting several seconds before updating RayService")
+		LogWithTimestamp(test.T(), "Waiting several seconds before updating RayService")
 		time.Sleep(30 * time.Second)
 
-		test.T().Logf("Updating RayService")
+		LogWithTimestamp(test.T(), "Updating RayService")
 		rayService, err := GetRayService(test, namespace.Name, "test-rayservice")
 		g.Expect(err).NotTo(HaveOccurred())
 		rayClusterName := rayService.Status.ActiveServiceStatus.RayClusterName
@@ -194,19 +197,7 @@ func TestRayServiceZeroDowntimeUpgrade(t *testing.T) {
 		newRayService, err = test.Client().Ray().RayV1().RayServices(newRayService.Namespace).Update(test.Ctx(), newRayService, metav1.UpdateOptions{})
 		g.Expect(err).NotTo(HaveOccurred())
 
-		test.T().Logf("Waiting for RayService %s/%s UpgradeInProgress condition to be true", newRayService.Namespace, newRayService.Name)
-		g.Eventually(RayService(test, newRayService.Namespace, newRayService.Name), TestTimeoutShort).Should(WithTransform(IsRayServiceUpgrading, BeTrue()))
-
-		// Assert that the active RayCluster is eventually different
-		test.T().Logf("Waiting for RayService %s/%s to switch to a new cluster", newRayService.Namespace, newRayService.Name)
-		g.Eventually(RayService(test, newRayService.Namespace, newRayService.Name), TestTimeoutShort).Should(WithTransform(func(rayService *rayv1.RayService) string {
-			return rayService.Status.ActiveServiceStatus.RayClusterName
-		}, Not(Equal(rayClusterName))))
-
-		test.T().Logf("Verifying RayService %s/%s UpgradeInProgress condition to be false", newRayService.Namespace, newRayService.Name)
-		rayService, err = GetRayService(test, namespace.Name, "test-rayservice")
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(IsRayServiceUpgrading(rayService)).To(BeFalse())
+		waitingForRayClusterSwitch(g, test, newRayService, rayClusterName)
 	}()
 
 	// Run Locust test
@@ -231,15 +222,15 @@ func TestRayServiceGCSFaultTolerance(t *testing.T) {
 	configMapAC := newConfigMap(namespace.Name, files(test, "locust_runner.py"))
 	configMap, err := test.Client().Core().CoreV1().ConfigMaps(namespace.Name).Apply(test.Ctx(), configMapAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
+	LogWithTimestamp(test.T(), "Created ConfigMap %s/%s successfully", configMap.Namespace, configMap.Name)
 
 	// Create the RayService for testing
 	KubectlApplyYAML(test, rayserviceYamlFile, namespace.Name)
 	rayService, err := GetRayService(test, namespace.Name, "test-rayservice")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Created RayService %s/%s successfully", rayService.Namespace, rayService.Name)
 
-	test.T().Logf("Waiting for RayService %s/%s to running", rayService.Namespace, rayService.Name)
+	LogWithTimestamp(test.T(), "Waiting for RayService %s/%s to be ready", rayService.Namespace, rayService.Name)
 	g.Eventually(RayService(test, rayService.Namespace, rayService.Name), TestTimeoutMedium).
 		Should(WithTransform(IsRayServiceReady, BeTrue()))
 
@@ -256,7 +247,7 @@ func TestRayServiceGCSFaultTolerance(t *testing.T) {
 	KubectlApplyYAML(test, locustYamlFile, namespace.Name)
 	locustCluster, err := GetRayCluster(test, namespace.Name, "locust-cluster")
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
+	LogWithTimestamp(test.T(), "Created Locust RayCluster %s/%s successfully", locustCluster.Namespace, locustCluster.Name)
 
 	g.Eventually(RayCluster(test, locustCluster.Namespace, locustCluster.Name), TestTimeoutMedium).
 		Should(WithTransform(RayClusterState, Equal(rayv1.Ready)))
@@ -264,7 +255,7 @@ func TestRayServiceGCSFaultTolerance(t *testing.T) {
 
 	locustHeadPod, err := GetHeadPod(test, locustCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	test.T().Logf("Found head pod %s/%s", locustHeadPod.Namespace, locustHeadPod.Name)
+	LogWithTimestamp(test.T(), "Found head pod %s/%s", locustHeadPod.Namespace, locustHeadPod.Name)
 
 	// Install Locust in the Locust head Pod
 	ExecPodCmd(test, locustHeadPod, common.RayHeadContainer, []string{"pip", "install", "locust==2.32.10"})
@@ -286,7 +277,7 @@ func TestRayServiceGCSFaultTolerance(t *testing.T) {
 	})
 	// Because this test shares the Locust RayCluster YAML file with other tests,
 	// we need to ensure the YAML file is not accidentally updated.
-	g.Expect(time.Since(startTime) > 2*time.Minute).To(BeTrue())
+	g.Expect(time.Since(startTime)).To(BeNumerically(">", 2*time.Minute))
 
 	newHeadPod, err := GetHeadPod(test, rayServiceUnderlyingRayCluster)
 	g.Expect(err).NotTo(HaveOccurred())
