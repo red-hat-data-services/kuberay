@@ -11,13 +11,6 @@ We use [pre-commit] to lint and format code before each commit.
 1. Install [pre-commit]
 1. Run `pre-commit install` to install the pre-commit hooks
 
-## Pre-commit Hooks
-
-We use [pre-commit] to lint and format code before each commit.
-
-1. Install [pre-commit]
-1. Run `pre-commit install` to install the pre-commit hooks
-
 ## KubeRay Operator
 
 The KubeRay Operator is responsible for managing Ray clusters on Kubernetes.
@@ -41,13 +34,6 @@ For more information about developing and testing the KubeRay Python client, ple
 KubeRay uses Protocol Buffers (protobuf) and OpenAPI specifications to define the API and data
 structures. For more information about developing and testing proto files and OpenAPI
 specifications, please refer to the [Proto and OpenAPI Development Guide].
-
-## KubeRay Kubectl Plugin (beta)
-
-A [kubectl plugin] that simplifies common workflows when deploying Ray on Kubernetes. If
-you aren't familiar with Kubernetes, this plugin simplifies running Ray on Kubernetes.
-For more information about developing and testing the KubeRay Kubectl Plugin, please refer to the
-[Kubectl Plugin Development Guide].
 
 ## KubeRay Kubectl Plugin (beta)
 
