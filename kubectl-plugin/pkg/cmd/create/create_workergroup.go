@@ -18,10 +18,6 @@ import (
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 )
 
-const (
-	resourceNvidiaGPU = "nvidia.com/gpu"
-)
-
 type CreateWorkerGroupOptions struct {
 	cmdFactory          cmdutil.Factory
 	ioStreams           *genericclioptions.IOStreams
