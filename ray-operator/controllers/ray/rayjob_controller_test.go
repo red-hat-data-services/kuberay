@@ -18,27 +18,24 @@ package ray
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
-
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/utils/ptr"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 	"github.com/ray-project/kuberay/ray-operator/pkg/features"
 	"github.com/ray-project/kuberay/ray-operator/test/support"
-
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	// +kubebuilder:scaffold:imports
 )
 
 func rayJobTemplate(name string, namespace string) *rayv1.RayJob {
@@ -46,6 +43,9 @@ func rayJobTemplate(name string, namespace string) *rayv1.RayJob {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			Annotations: map[string]string{
+				"foo": "bar",
+			},
 		},
 		Spec: rayv1.RayJobSpec{
 			Entrypoint:               "sleep 999",
@@ -54,7 +54,6 @@ func rayJobTemplate(name string, namespace string) *rayv1.RayJob {
 			RayClusterSpec: &rayv1.RayClusterSpec{
 				RayVersion: support.GetRayVersion(),
 				HeadGroupSpec: rayv1.HeadGroupSpec{
-					RayStartParams: map[string]string{},
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
@@ -73,16 +72,16 @@ func rayJobTemplate(name string, namespace string) *rayv1.RayJob {
 									},
 									Ports: []corev1.ContainerPort{
 										{
-											Name:          "gcs-server",
-											ContainerPort: 6379,
+											Name:          utils.GcsServerPortName,
+											ContainerPort: utils.DefaultGcsServerPort,
 										},
 										{
-											Name:          "dashboard",
-											ContainerPort: 8265,
+											Name:          utils.DashboardPortName,
+											ContainerPort: utils.DefaultDashboardPort,
 										},
 										{
-											Name:          "client",
-											ContainerPort: 10001,
+											Name:          utils.ClientPortName,
+											ContainerPort: utils.DefaultClientPort,
 										},
 									},
 								},
@@ -92,11 +91,10 @@ func rayJobTemplate(name string, namespace string) *rayv1.RayJob {
 				},
 				WorkerGroupSpecs: []rayv1.WorkerGroupSpec{
 					{
-						Replicas:       ptr.To[int32](3),
-						MinReplicas:    ptr.To[int32](0),
-						MaxReplicas:    ptr.To[int32](10000),
-						GroupName:      "small-group",
-						RayStartParams: map[string]string{},
+						Replicas:    ptr.To[int32](3),
+						MinReplicas: ptr.To[int32](0),
+						MaxReplicas: ptr.To[int32](10000),
+						GroupName:   "small-group",
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
@@ -141,7 +139,7 @@ var _ = Context("RayJob with different submission modes", func() {
 					Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob: %v", rayJob.Name)
 					Eventually(
 						getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-						time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+						time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 				}
 			})
 
@@ -158,7 +156,7 @@ var _ = Context("RayJob with different submission modes", func() {
 					rayCluster := &rayv1.RayCluster{}
 					Eventually(
 						getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-						time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+						time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 					// Make RayCluster.Status.State to be rayv1.Ready.
 					updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -212,7 +210,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -229,20 +227,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -271,7 +271,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -310,7 +310,44 @@ var _ = Context("RayJob with different submission modes", func() {
 				job := &batchv1.Job{}
 				Consistently(
 					getResourceFunc(ctx, namespacedName, job),
-					time.Second*3, time.Millisecond*500).Should(BeNil())
+					time.Second*3, time.Millisecond*500).Should(Succeed())
+			})
+		})
+
+		Describe("Successful RayJob in K8sJobMode with a maximum name", Ordered, func() {
+			ctx := context.Background()
+			namespace := "default"
+			rayJob := rayJobTemplate(strings.Repeat("j", utils.MaxRayJobNameLength), namespace)
+			rayCluster := &rayv1.RayCluster{}
+
+			It("Create a RayJob custom resource", func() {
+				err := k8sClient.Create(ctx, rayJob)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
+				Eventually(
+					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
+			})
+
+			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
+				Eventually(
+					getRayJobDeploymentStatus(ctx, rayJob),
+					time.Second*3, time.Millisecond*500).Should(Equal(rayv1.JobDeploymentStatusInitializing), "JobDeploymentStatus = %v", rayJob.Status.JobDeploymentStatus)
+
+				// In Initializing state, Status.RayClusterName, Status.JobId, and Status.StartTime must be set.
+				Expect(rayJob.Status.RayClusterName).NotTo(BeEmpty())
+				Expect(rayJob.Status.JobId).NotTo(BeEmpty())
+				Expect(rayJob.Status.StartTime).NotTo(BeNil())
+			})
+
+			It("In Initializing state, the RayCluster should eventually be created.", func() {
+				var svc corev1.Service
+				Eventually(
+					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+				// Also check its service name.
+				Eventually(
+					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName + "-head-svc", Namespace: namespace}, &svc),
+					time.Second*3, time.Millisecond*500).Should(Succeed())
 			})
 		})
 
@@ -332,7 +369,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -344,12 +381,12 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -398,7 +435,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -415,20 +452,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -457,7 +496,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -501,7 +540,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			namespace := "default"
 			activeDeadlineSeconds := int32(3)
 			rayJob := rayJobTemplate("rayjob-deadline", namespace)
-			rayJob.Spec.ActiveDeadlineSeconds = ptr.To[int32](activeDeadlineSeconds)
+			rayJob.Spec.ActiveDeadlineSeconds = ptr.To(activeDeadlineSeconds)
 
 			It("Verify RayJob spec", func() {
 				// In this test, RayJob passes through the following states: New -> Initializing -> Complete (because of ActiveDeadlineSeconds).
@@ -516,7 +555,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -560,7 +599,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -577,20 +616,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -620,7 +661,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				// Update fake dashboard client to return job info with "Failed" status.
 				//nolint:unparam // this is a mock and the function signature cannot change
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) {
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusFailed}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusFailed, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -670,20 +711,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created (attempt 2)", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready (attempt 2)", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -713,7 +756,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				// Update fake dashboard client to return job info with "Failed" status.
 				//nolint:unparam // this is a mock and the function signature cannot change
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) {
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -774,7 +817,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			It("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -790,20 +833,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			It("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			It("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -860,7 +905,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			By("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -877,20 +922,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			By("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -919,7 +966,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -958,7 +1005,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				job := &batchv1.Job{}
 				Consistently(
 					getResourceFunc(ctx, namespacedName, job),
-					time.Second*3, time.Millisecond*500).Should(BeNil())
+					time.Second*3, time.Millisecond*500).Should(Succeed())
 			})
 		})
 
@@ -980,7 +1027,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			By("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -997,20 +1044,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			By("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -1039,7 +1088,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -1072,7 +1121,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				// RayCluster exists
 				Consistently(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check worker group is suspended
 				Expect(*rayCluster.Spec.WorkerGroupSpecs[0].Suspend).To(BeTrue())
@@ -1095,7 +1144,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				job := &batchv1.Job{}
 				Consistently(
 					getResourceFunc(ctx, namespacedName, job),
-					time.Second*3, time.Millisecond*500).Should(BeNil())
+					time.Second*3, time.Millisecond*500).Should(Succeed())
 			})
 		})
 
@@ -1113,7 +1162,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			By("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -1130,20 +1179,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			By("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -1172,7 +1223,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 
@@ -1221,7 +1272,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create RayJob")
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "Should be able to see RayJob: %v", rayJob.Name)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "Should be able to see RayJob: %v", rayJob.Name)
 			})
 
 			By("RayJobs's JobDeploymentStatus transitions from New to Initializing.", func() {
@@ -1238,20 +1289,22 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("In Initializing state, the RayCluster should eventually be created.", func() {
 				Eventually(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Check whether RayCluster is consistent with RayJob's RayClusterSpec.
 				Expect(rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(rayJob.Spec.RayClusterSpec.WorkerGroupSpecs[0].Replicas))
 				Expect(rayCluster.Spec.RayVersion).To(Equal(rayJob.Spec.RayClusterSpec.RayVersion))
 
-				// TODO (kevin85421): Check the RayCluster labels and annotations.
+				// TODO (kevin85421): Check the RayCluster labels.
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRNameLabelKey, rayJob.Name))
 				Expect(rayCluster.Labels).Should(HaveKeyWithValue(utils.RayOriginatedFromCRDLabelKey, utils.RayOriginatedFromCRDLabelValue(utils.RayJobCRD)))
+
+				Expect(rayCluster.Annotations).Should(Equal(rayJob.Annotations))
 			})
 
 			By("Make RayCluster.Status.State to be rayv1.Ready", func() {
 				// The RayCluster is not 'Ready' yet because Pods are not running and ready.
-				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready)) //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+				Expect(rayCluster.Status.State).NotTo(Equal(rayv1.Ready))
 
 				updateHeadPodToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
 				updateWorkerPodsToRunningAndReady(ctx, rayJob.Status.RayClusterName, namespace)
@@ -1280,7 +1333,7 @@ var _ = Context("RayJob with different submission modes", func() {
 			By("RayJobs's JobDeploymentStatus transitions from Running to Complete.", func() {
 				// Update fake dashboard client to return job info with "Succeeded" status.
 				getJobInfo := func(context.Context, string) (*utils.RayJobInfo, error) { //nolint:unparam // This is a mock function so parameters are required
-					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded}, nil
+					return &utils.RayJobInfo{JobStatus: rayv1.JobStatusSucceeded, EndTime: uint64(time.Now().UnixMilli())}, nil
 				}
 				fakeRayDashboardClient.GetJobInfoMock.Store(&getJobInfo)
 				defer fakeRayDashboardClient.GetJobInfoMock.Store(nil)
@@ -1313,12 +1366,12 @@ var _ = Context("RayJob with different submission modes", func() {
 				// RayJob exists
 				Consistently(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Name, Namespace: namespace}, rayJob),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayJob %v not found", rayJob)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayJob %v not found", rayJob)
 
 				// RayCluster exists
 				Consistently(
 					getResourceFunc(ctx, client.ObjectKey{Name: rayJob.Status.RayClusterName, Namespace: namespace}, rayCluster),
-					time.Second*3, time.Millisecond*500).Should(BeNil(), "RayCluster %v not found", rayJob.Status.RayClusterName)
+					time.Second*3, time.Millisecond*500).Should(Succeed(), "RayCluster %v not found", rayJob.Status.RayClusterName)
 
 				// Worker replicas set to 3
 				Expect(*rayCluster.Spec.WorkerGroupSpecs[0].Replicas).To(Equal(int32(3)))
@@ -1341,7 +1394,7 @@ var _ = Context("RayJob with different submission modes", func() {
 				job := &batchv1.Job{}
 				Consistently(
 					getResourceFunc(ctx, namespacedName, job),
-					time.Second*3, time.Millisecond*500).Should(BeNil())
+					time.Second*3, time.Millisecond*500).Should(Succeed())
 			})
 		})
 	})

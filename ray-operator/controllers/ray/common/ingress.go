@@ -3,13 +3,12 @@ package common
 import (
 	"context"
 
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
-
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 )
 
 const IngressClassAnnotationKey = "kubernetes.io/ingress.class"
@@ -21,7 +20,7 @@ func BuildIngressForHeadService(ctx context.Context, cluster rayv1.RayCluster) (
 
 	labels := map[string]string{
 		utils.RayClusterLabelKey:                cluster.Name,
-		utils.RayIDLabelKey:                     utils.GenerateIdentifier(cluster.Name, rayv1.HeadNode),
+		utils.RayIDLabelKey:                     utils.CheckLabel(utils.GenerateIdentifier(cluster.Name, rayv1.HeadNode)),
 		utils.KubernetesApplicationNameLabelKey: utils.ApplicationName,
 		utils.KubernetesCreatedByLabelKey:       utils.ComponentName,
 	}

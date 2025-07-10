@@ -32,12 +32,52 @@ import (
 
 const filePathInPod = "/tmp/ray/session_latest/logs/"
 
+type nodeTypeEnum string
+
+const (
+	allNodeType    nodeTypeEnum = "all"
+	headNodeType   nodeTypeEnum = "head"
+	workerNodeType nodeTypeEnum = "worker"
+)
+
+// String is used both by fmt.Print and by Cobra in help text
+func (e *nodeTypeEnum) String() string {
+	return string(*e)
+}
+
+// Set must have pointer receiver so it doesn't change the value of a copy
+func (e *nodeTypeEnum) Set(v string) error {
+	val := strings.ToLower(v)
+
+	switch val {
+	case string(allNodeType), string(headNodeType), string(workerNodeType):
+		*e = nodeTypeEnum(val)
+		return nil
+	default:
+		return fmt.Errorf("must be one of %q, %q, or %q", allNodeType, headNodeType, workerNodeType)
+	}
+}
+
+// Type is only used in help text
+func (e *nodeTypeEnum) Type() string {
+	return "enum"
+}
+
+func nodeTypeCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return []string{
+		fmt.Sprintf("%s\tdownload logs from %s Ray nodes", allNodeType, allNodeType),
+		fmt.Sprintf("%s\tdownload logs from %s Ray nodes", headNodeType, headNodeType),
+		fmt.Sprintf("%s\tdownload logs from %s Ray nodes", workerNodeType, workerNodeType),
+	}, cobra.ShellCompDirectiveDefault
+}
+
 type ClusterLogOptions struct {
-	configFlags  *genericclioptions.ConfigFlags
+	cmdFactory   cmdutil.Factory
 	ioStreams    *genericclioptions.IOStreams
 	Executor     RemoteExecutor
+	namespace    string
 	outputDir    string
-	nodeType     string
+	nodeType     nodeTypeEnum
 	ResourceName string
 	ResourceType util.ResourceType
 }
@@ -68,26 +108,31 @@ var (
 	deleteOutputDir = false
 )
 
-func NewClusterLogOptions(streams genericclioptions.IOStreams) *ClusterLogOptions {
+func NewClusterLogOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *ClusterLogOptions {
 	return &ClusterLogOptions{
-		configFlags: genericclioptions.NewConfigFlags(true),
-		ioStreams:   &streams,
-		Executor:    &DefaultRemoteExecutor{},
+		cmdFactory: cmdFactory,
+		ioStreams:  &streams,
+		Executor:   &DefaultRemoteExecutor{},
+		nodeType:   allNodeType,
 	}
 }
 
-func NewClusterLogCommand(streams genericclioptions.IOStreams) *cobra.Command {
-	options := NewClusterLogOptions(streams)
-	// Initialize the factory for later use with the current config flag
-	cmdFactory := cmdutil.NewFactory(options.configFlags)
+func NewClusterLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+	options := NewClusterLogOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:               "log (RAYCLUSTER | TYPE/NAME) [--out-dir DIR_PATH] [--node-type all|head|worker]",
-		Short:             "Get Ray cluster logs",
-		Long:              logLong,
-		Example:           logExample,
-		Aliases:           []string{"logs"},
-		SilenceUsage:      true,
+		Use:          "log (RAYCLUSTER | TYPE/NAME) [--out-dir DIR_PATH] [--node-type all|head|worker]",
+		Short:        "Get Ray cluster logs",
+		Long:         logLong,
+		Example:      logExample,
+		Aliases:      []string{"logs"},
+		SilenceUsage: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return cmdutil.UsageErrorf(cmd, "accepts 1 arg, received %d\n%s", len(args), cmd.Use)
+			}
+			return nil
+		},
 		ValidArgsFunction: completion.RayClusterResourceNameCompletionFunc(cmdFactory),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.Complete(cmd, args); err != nil {
@@ -100,18 +145,22 @@ func NewClusterLogCommand(streams genericclioptions.IOStreams) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&options.outputDir, "out-dir", options.outputDir, "directory to save the logs to")
-	cmd.Flags().StringVar(&options.nodeType, "node-type", options.nodeType, "type of Ray node from which to download log, supports 'worker', 'head', or 'all'")
-	options.configFlags.AddFlags(cmd.Flags())
+	cmd.Flags().Var(&options.nodeType, "node-type", "type of Ray node from which to download logs, supports: 'worker', 'head', or 'all'")
+
+	cobra.CheckErr(cmd.RegisterFlagCompletionFunc("node-type", nodeTypeCompletion))
+
 	return cmd
 }
 
 func (options *ClusterLogOptions) Complete(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmdutil.UsageErrorf(cmd, "%s", cmd.Use)
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return fmt.Errorf("failed to get namespace: %w", err)
 	}
+	options.namespace = namespace
 
-	if *options.configFlags.Namespace == "" {
-		*options.configFlags.Namespace = "default"
+	if options.namespace == "" {
+		options.namespace = "default"
 	}
 
 	typeAndName := strings.Split(args[0], "/")
@@ -137,25 +186,10 @@ func (options *ClusterLogOptions) Complete(cmd *cobra.Command, args []string) er
 		options.ResourceName = typeAndName[1]
 	}
 
-	if options.nodeType == "" {
-		options.nodeType = "all"
-	} else {
-		options.nodeType = strings.ToLower(options.nodeType)
-	}
-
 	return nil
 }
 
 func (options *ClusterLogOptions) Validate() error {
-	// Overrides and binds the kube config then retrieves the merged result
-	config, err := options.configFlags.ToRawKubeConfigLoader().RawConfig()
-	if err != nil {
-		return fmt.Errorf("Error retrieving raw config: %w", err)
-	}
-	if !util.HasKubectlContext(config, options.configFlags) {
-		return fmt.Errorf("no context is currently set, use %q or %q to select a new one", "--context", "kubectl config use-context <context>")
-	}
-
 	if options.outputDir == "" {
 		fmt.Fprintln(options.ioStreams.Out, "No output directory specified, creating dir under current directory using resource name.")
 		options.outputDir = options.ResourceName
@@ -201,13 +235,13 @@ func (options *ClusterLogOptions) Run(ctx context.Context, factory cmdutil.Facto
 	case util.RayCluster:
 		clusterName = options.ResourceName
 	case util.RayJob:
-		rayJob, err := clientSet.RayClient().RayV1().RayJobs(*options.configFlags.Namespace).Get(ctx, options.ResourceName, v1.GetOptions{})
+		rayJob, err := clientSet.RayClient().RayV1().RayJobs(options.namespace).Get(ctx, options.ResourceName, v1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to retrieve Ray job info for %s: %w", options.ResourceName, err)
 		}
 		clusterName = rayJob.Status.RayClusterName
 	case util.RayService:
-		rayService, err := clientSet.RayClient().RayV1().RayServices(*options.configFlags.Namespace).Get(ctx, options.ResourceName, v1.GetOptions{})
+		rayService, err := clientSet.RayClient().RayV1().RayServices(options.namespace).Get(ctx, options.ResourceName, v1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to retrieve Ray job info for %s: %w", options.ResourceName, err)
 		}
@@ -236,7 +270,7 @@ func (options *ClusterLogOptions) Run(ctx context.Context, factory cmdutil.Facto
 	}
 
 	// Get list of nodes that are considered the specified node type
-	rayNodes, err := clientSet.KubernetesClient().CoreV1().Pods(*options.configFlags.Namespace).List(ctx, listopts)
+	rayNodes, err := clientSet.KubernetesClient().CoreV1().Pods(options.namespace).List(ctx, listopts)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve head node for Ray cluster %s: %w", clusterName, err)
 	}
@@ -379,7 +413,7 @@ func (options *ClusterLogOptions) downloadRayLogFiles(ctx context.Context, exec 
 				fmt.Fprintf(options.ioStreams.Out, "file mode out side of accceptable value %d skipping file", header.Mode)
 			}
 			// Create file and write contents
-			outFile, err := os.OpenFile(localFilePath, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode)) //nolint:gosec // lint failing due to file mode conversion from uint64 to int32, checked above
+			outFile, err := os.OpenFile(localFilePath, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
 			if err != nil {
 				return fmt.Errorf("Error creating file: %w", err)
 			}

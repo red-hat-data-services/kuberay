@@ -11,34 +11,19 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
-
-	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/expectations"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
-	"github.com/ray-project/kuberay/ray-operator/pkg/features"
-
-	batchv1 "k8s.io/api/batch/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
-
-	"k8s.io/client-go/tools/record"
-
-	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
-
 	"github.com/go-logr/logr"
 	routev1 "github.com/openshift/api/route/v1"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/rest"
-
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +32,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
+	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/expectations"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/metrics"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
+	"github.com/ray-project/kuberay/ray-operator/pkg/features"
 )
 
 type reconcileFunc func(context.Context, *rayv1.RayCluster) error
@@ -58,45 +52,6 @@ var (
 	podUIDIndexField = "metadata.uid"
 )
 
-// getDiscoveryClient returns a discovery client for the current reconciler
-func getDiscoveryClient(config *rest.Config) (*discovery.DiscoveryClient, error) {
-	return discovery.NewDiscoveryClientForConfig(config)
-}
-
-// Check where we are running. We are trying to distinguish here whether
-// this is vanilla kubernetes cluster or Openshift
-func getClusterType(ctx context.Context) bool {
-	logger := ctrl.LoggerFrom(ctx)
-	if os.Getenv("USE_INGRESS_ON_OPENSHIFT") == "true" {
-		// Environment is set to treat OpenShift cluster as Vanilla Kubernetes
-		return false
-	}
-
-	// The discovery package is used to discover APIs supported by a Kubernetes API server.
-	config, err := ctrl.GetConfig()
-	if err == nil && config != nil {
-		dclient, err := getDiscoveryClient(config)
-		if err == nil && dclient != nil {
-			apiGroupList, err := dclient.ServerGroups()
-			if err != nil {
-				logger.Info("Error while querying ServerGroups, assuming we're on Vanilla Kubernetes")
-				return false
-			}
-			for i := 0; i < len(apiGroupList.Groups); i++ {
-				if strings.HasSuffix(apiGroupList.Groups[i].Name, ".openshift.io") {
-					logger.Info("We detected being on OpenShift!")
-					return true
-				}
-			}
-			return false
-		}
-		logger.Info("Cannot retrieve a DiscoveryClient, assuming we're on Vanilla Kubernetes")
-		return false
-	}
-	logger.Info("Cannot retrieve config, assuming we're on Vanilla Kubernetes")
-	return false
-}
-
 // NewReconciler returns a new reconcile.Reconciler
 func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterReconcilerOptions, rayConfigs configapi.Configuration) *RayClusterReconciler {
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.Pod{}, podUIDIndexField, func(rawObj client.Object) []string {
@@ -105,9 +60,9 @@ func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterR
 	}); err != nil {
 		panic(err)
 	}
-	isOpenShift := getClusterType(ctx)
+
 	// init the batch scheduler manager
-	schedulerMgr, err := batchscheduler.NewSchedulerManager(rayConfigs, mgr.GetConfig())
+	schedulerMgr, err := batchscheduler.NewSchedulerManager(ctx, rayConfigs, mgr.GetConfig())
 	if err != nil {
 		// fail fast if the scheduler plugin fails to init
 		// prevent running the controller in an undefined state
@@ -117,15 +72,12 @@ func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterR
 	// add schema to runtime
 	schedulerMgr.AddToScheme(mgr.GetScheme())
 	return &RayClusterReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		Recorder:          mgr.GetEventRecorderFor("raycluster-controller"),
-		BatchSchedulerMgr: schedulerMgr,
-		IsOpenShift:       isOpenShift,
-
+		Client:                     mgr.GetClient(),
+		Scheme:                     mgr.GetScheme(),
+		Recorder:                   mgr.GetEventRecorderFor("raycluster-controller"),
+		BatchSchedulerMgr:          schedulerMgr,
 		rayClusterScaleExpectation: expectations.NewRayClusterScaleExpectation(mgr.GetClient()),
-		headSidecarContainers:      options.HeadSidecarContainers,
-		workerSidecarContainers:    options.WorkerSidecarContainers,
+		options:                    options,
 	}
 }
 
@@ -136,16 +88,14 @@ type RayClusterReconciler struct {
 	Recorder                   record.EventRecorder
 	BatchSchedulerMgr          *batchscheduler.SchedulerManager
 	rayClusterScaleExpectation expectations.RayClusterScaleExpectation
-
-	headSidecarContainers   []corev1.Container
-	workerSidecarContainers []corev1.Container
-
-	IsOpenShift bool
+	options                    RayClusterReconcilerOptions
 }
 
 type RayClusterReconcilerOptions struct {
-	HeadSidecarContainers   []corev1.Container
-	WorkerSidecarContainers []corev1.Container
+	RayClusterMetricsManager *metrics.RayClusterMetricsManager
+	HeadSidecarContainers    []corev1.Container
+	WorkerSidecarContainers  []corev1.Container
+	IsOpenShift              bool
 }
 
 // Reconcile reads that state of the cluster for a RayCluster object and makes changes based on it
@@ -185,7 +135,6 @@ func (r *RayClusterReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	if errors.IsNotFound(err) {
 		// Clear all related expectations
 		r.rayClusterScaleExpectation.Delete(instance.Name, instance.Namespace)
-		logger.Info("Read request instance not found error!")
 	} else {
 		logger.Error(err, "Read request instance error!")
 	}
@@ -220,8 +169,17 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 		return ctrl.Result{}, nil
 	}
 
-	if err := utils.ValidateRayClusterSpec(instance); err != nil {
-		logger.Error(err, fmt.Sprintf("The RayCluster spec is invalid %s/%s", instance.Namespace, instance.Name))
+	setDefaults(instance)
+
+	if err := utils.ValidateRayClusterMetadata(instance.ObjectMeta); err != nil {
+		logger.Error(err, "The RayCluster metadata is invalid")
+		r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.InvalidRayClusterMetadata),
+			"The RayCluster metadata is invalid %s/%s: %v", instance.Namespace, instance.Name, err)
+		return ctrl.Result{}, nil
+	}
+
+	if err := utils.ValidateRayClusterSpec(&instance.Spec, instance.Annotations); err != nil {
+		logger.Error(err, "The RayCluster spec is invalid")
 		r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.InvalidRayClusterSpec),
 			"The RayCluster spec is invalid %s/%s: %v", instance.Namespace, instance.Name, err)
 		return ctrl.Result{}, nil
@@ -243,7 +201,7 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 	// manually after the RayCluster CR deletion.
 	enableGCSFTRedisCleanup := strings.ToLower(os.Getenv(utils.ENABLE_GCS_FT_REDIS_CLEANUP)) != "false"
 
-	if enableGCSFTRedisCleanup && utils.IsGCSFaultToleranceEnabled(*instance) {
+	if enableGCSFTRedisCleanup && utils.IsGCSFaultToleranceEnabled(&instance.Spec, instance.Annotations) {
 		if instance.DeletionTimestamp.IsZero() {
 			if !controllerutil.ContainsFinalizer(instance, utils.GCSFaultToleranceRedisCleanupFinalizer) {
 				logger.Info(
@@ -413,11 +371,11 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 func (r *RayClusterReconciler) inconsistentRayClusterStatus(ctx context.Context, oldStatus rayv1.RayClusterStatus, newStatus rayv1.RayClusterStatus) bool {
 	logger := ctrl.LoggerFrom(ctx)
 
-	if oldStatus.State != newStatus.State || oldStatus.Reason != newStatus.Reason { //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+	if oldStatus.State != newStatus.State || oldStatus.Reason != newStatus.Reason {
 		logger.Info(
 			"inconsistentRayClusterStatus",
-			"oldState", oldStatus.State, //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
-			"newState", newStatus.State, //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+			"oldState", oldStatus.State,
+			"newState", newStatus.State,
 			"oldReason", oldStatus.Reason,
 			"newReason", newStatus.Reason,
 		)
@@ -467,7 +425,7 @@ func (r *RayClusterReconciler) reconcileIngress(ctx context.Context, instance *r
 		return nil
 	}
 
-	if r.IsOpenShift {
+	if r.options.IsOpenShift {
 		// This is open shift - create route
 		return r.reconcileRouteOpenShift(ctx, instance)
 	}
@@ -727,31 +685,21 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 	} else if len(headPods.Items) == 0 {
 		// Create head Pod if it does not exist.
 		logger.Info("reconcilePods: Found 0 head Pods; creating a head Pod for the RayCluster.")
-		common.CreatedClustersCounterInc(instance.Namespace)
 		if err := r.createHeadPod(ctx, *instance); err != nil {
-			common.FailedClustersCounterInc(instance.Namespace)
 			return errstd.Join(utils.ErrFailedCreateHeadPod, err)
 		}
-		common.SuccessfulClustersCounterInc(instance.Namespace)
-	} else if len(headPods.Items) > 1 {
-		logger.Info("reconcilePods: Found more than one head Pods; deleting extra head Pods.", "nHeadPods", len(headPods.Items))
-		// TODO (kevin85421): In-place update may not be a good idea.
-		itemLength := len(headPods.Items)
-		for index := 0; index < itemLength; index++ {
-			if headPods.Items[index].Status.Phase == corev1.PodRunning || headPods.Items[index].Status.Phase == corev1.PodPending {
-				// Remove the healthy pod at index i from the list of pods to delete
-				headPods.Items[index] = headPods.Items[len(headPods.Items)-1] // replace last element with the healthy head.
-				headPods.Items = headPods.Items[:len(headPods.Items)-1]       // Truncate slice.
-				itemLength--
-			}
+	} else if len(headPods.Items) > 1 { // This should never happen. This protects against the case that users manually create headpod.
+		correctHeadPodName := instance.Name + "-head"
+		headPodNames := make([]string, len(headPods.Items))
+		for i, pod := range headPods.Items {
+			headPodNames[i] = pod.Name
 		}
-		// delete all the extra head pod pods
-		for _, extraHeadPodToDelete := range headPods.Items {
-			if err := r.Delete(ctx, &extraHeadPodToDelete); err != nil {
-				return errstd.Join(utils.ErrFailedDeleteHeadPod, err)
-			}
-			r.rayClusterScaleExpectation.ExpectScalePod(extraHeadPodToDelete.Namespace, instance.Name, expectations.HeadGroup, extraHeadPodToDelete.Name, expectations.Delete)
-		}
+
+		logger.Info("Multiple head pods found, it should only exist one head pod. Please delete extra head pods.",
+			"found pods", headPodNames,
+			"should only leave", correctHeadPodName,
+		)
+		return fmt.Errorf("%d head pods found %v. Please delete extra head pods and leave only the head pod with name %s", len(headPods.Items), headPodNames, correctHeadPodName)
 	}
 
 	// Reconcile worker pods now
@@ -761,8 +709,8 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			continue
 		}
 		// workerReplicas will store the target number of pods for this worker group.
-		var workerReplicas int32 = utils.GetWorkerGroupDesiredReplicas(ctx, worker)
-		logger.Info("reconcilePods", "desired workerReplicas (always adhering to minReplicas/maxReplica)", workerReplicas, "worker group", worker.GroupName, "maxReplicas", worker.MaxReplicas, "minReplicas", worker.MinReplicas, "replicas", worker.Replicas)
+		numExpectedWorkerPods := int(utils.GetWorkerGroupDesiredReplicas(ctx, worker))
+		logger.Info("reconcilePods", "desired workerReplicas (always adhering to minReplicas/maxReplica)", numExpectedWorkerPods, "worker group", worker.GroupName, "maxReplicas", worker.MaxReplicas, "minReplicas", worker.MinReplicas, "replicas", worker.Replicas)
 
 		workerPods := corev1.PodList{}
 		if err := r.List(ctx, &workerPods, common.RayClusterGroupPodsAssociationOptions(instance, worker.GroupName).ToListOptions()...); err != nil {
@@ -844,10 +792,9 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 		if worker.NumOfHosts <= 0 {
 			worker.NumOfHosts = 1
 		}
-		numExpectedPods := int(workerReplicas * worker.NumOfHosts)
-		diff := numExpectedPods - len(runningPods.Items)
+		diff := numExpectedWorkerPods - len(runningPods.Items)
 
-		logger.Info("reconcilePods", "workerReplicas", workerReplicas, "NumOfHosts", worker.NumOfHosts, "runningPods", len(runningPods.Items), "diff", diff)
+		logger.Info("reconcilePods", "workerReplicas", numExpectedWorkerPods, "NumOfHosts", worker.NumOfHosts, "runningPods", len(runningPods.Items), "diff", diff)
 
 		if diff > 0 {
 			// pods need to be added
@@ -866,7 +813,7 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			// diff < 0 indicates the need to delete some Pods to match the desired number of replicas. However,
 			// randomly deleting Pods is certainly not ideal. So, if autoscaling is enabled for the cluster, we
 			// will disable random Pod deletion, making Autoscaler the sole decision-maker for Pod deletions.
-			enableInTreeAutoscaling := utils.IsAutoscalingEnabled(instance)
+			enableInTreeAutoscaling := utils.IsAutoscalingEnabled(&instance.Spec)
 
 			// TODO (kevin85421): `enableRandomPodDelete` is a feature flag for KubeRay v0.6.0. If users want to use
 			// the old behavior, they can set the environment variable `ENABLE_RANDOM_POD_DELETE` to `true`. When the
@@ -1026,8 +973,6 @@ func (r *RayClusterReconciler) createHeadRoute(ctx context.Context, route *route
 func (r *RayClusterReconciler) createService(ctx context.Context, svc *corev1.Service, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// making sure the name is valid
-	svc.Name = utils.CheckName(svc.Name)
 	if err := controllerutil.SetControllerReference(instance, svc, r.Scheme); err != nil {
 		return err
 	}
@@ -1093,14 +1038,15 @@ func (r *RayClusterReconciler) createWorkerPod(ctx context.Context, instance ray
 // Build head instance pod(s).
 func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.RayCluster) corev1.Pod {
 	logger := ctrl.LoggerFrom(ctx)
-	podName := utils.PodGenerateName(instance.Name, rayv1.HeadNode)
+	podName := utils.PodName(instance.Name, rayv1.HeadNode, false)
 	fqdnRayIP := utils.GenerateFQDNServiceName(ctx, instance, instance.Namespace) // Fully Qualified Domain Name
+
 	// The Ray head port used by workers to connect to the cluster (GCS server port for Ray >= 1.11.0, Redis port for older Ray.)
 	headPort := common.GetHeadPort(instance.Spec.HeadGroupSpec.RayStartParams)
-	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance)
+	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance.Spec)
 	podConf := common.DefaultHeadPodTemplate(ctx, instance, instance.Spec.HeadGroupSpec, podName, headPort)
-	if len(r.headSidecarContainers) > 0 {
-		podConf.Spec.Containers = append(podConf.Spec.Containers, r.headSidecarContainers...)
+	if len(r.options.HeadSidecarContainers) > 0 {
+		podConf.Spec.Containers = append(podConf.Spec.Containers, r.options.HeadSidecarContainers...)
 	}
 	logger.Info("head pod labels", "labels", podConf.Labels)
 	creatorCRDType := getCreatorCRDType(instance)
@@ -1120,15 +1066,15 @@ func getCreatorCRDType(instance rayv1.RayCluster) utils.CRDType {
 // Build worker instance pods.
 func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv1.RayCluster, worker rayv1.WorkerGroupSpec) corev1.Pod {
 	logger := ctrl.LoggerFrom(ctx)
-	podName := utils.PodGenerateName(fmt.Sprintf("%s-%s", instance.Name, worker.GroupName), rayv1.WorkerNode)
+	podName := utils.PodName(fmt.Sprintf("%s-%s", instance.Name, worker.GroupName), rayv1.WorkerNode, true)
 	fqdnRayIP := utils.GenerateFQDNServiceName(ctx, instance, instance.Namespace) // Fully Qualified Domain Name
 
 	// The Ray head port used by workers to connect to the cluster (GCS server port for Ray >= 1.11.0, Redis port for older Ray.)
 	headPort := common.GetHeadPort(instance.Spec.HeadGroupSpec.RayStartParams)
-	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance)
+	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance.Spec)
 	podTemplateSpec := common.DefaultWorkerPodTemplate(ctx, instance, worker, podName, fqdnRayIP, headPort)
-	if len(r.workerSidecarContainers) > 0 {
-		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers, r.workerSidecarContainers...)
+	if len(r.options.WorkerSidecarContainers) > 0 {
+		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers, r.options.WorkerSidecarContainers...)
 	}
 	creatorCRDType := getCreatorCRDType(instance)
 	pod := common.BuildPod(ctx, podTemplateSpec, rayv1.WorkerNode, worker.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP)
@@ -1149,7 +1095,7 @@ func (r *RayClusterReconciler) buildRedisCleanupJob(ctx context.Context, instanc
 
 	// Only keep the Ray container in the Redis cleanup Job.
 	pod.Spec.Containers = []corev1.Container{pod.Spec.Containers[utils.RayContainerIndex]}
-	pod.Spec.Containers[utils.RayContainerIndex].Command = []string{"/bin/bash", "-lc", "--"}
+	pod.Spec.Containers[utils.RayContainerIndex].Command = utils.GetContainerCommand([]string{})
 	pod.Spec.Containers[utils.RayContainerIndex].Args = []string{
 		"echo \"To get more information about manually deleting the storage namespace in Redis and removing the RayCluster's finalizer, please check https://docs.ray.io/en/master/cluster/kubernetes/user-guides/kuberay-gcs-ft.html for more details.\" && " +
 			"python -c " +
@@ -1235,7 +1181,6 @@ func (r *RayClusterReconciler) SetupWithManager(mgr ctrl.Manager, reconcileConcu
 		))).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{})
-
 	if r.BatchSchedulerMgr != nil {
 		r.BatchSchedulerMgr.ConfigureReconciler(b)
 	}
@@ -1303,7 +1248,7 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 
 	if reconcileErr == nil && len(runtimePods.Items) == int(newInstance.Status.DesiredWorkerReplicas)+1 { // workers + 1 head
 		if utils.CheckAllPodsRunning(ctx, runtimePods) {
-			newInstance.Status.State = rayv1.Ready //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+			newInstance.Status.State = rayv1.Ready
 			newInstance.Status.Reason = ""
 		}
 	}
@@ -1398,7 +1343,7 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 	}
 
 	if newInstance.Spec.Suspend != nil && *newInstance.Spec.Suspend && len(runtimePods.Items) == 0 {
-		newInstance.Status.State = rayv1.Suspended //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+		newInstance.Status.State = rayv1.Suspended
 	}
 
 	if err := r.updateEndpoints(ctx, newInstance); err != nil {
@@ -1412,11 +1357,11 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 	timeNow := metav1.Now()
 	newInstance.Status.LastUpdateTime = &timeNow
 
-	if instance.Status.State != newInstance.Status.State { //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+	if instance.Status.State != newInstance.Status.State {
 		if newInstance.Status.StateTransitionTimes == nil {
 			newInstance.Status.StateTransitionTimes = make(map[rayv1.ClusterState]*metav1.Time)
 		}
-		newInstance.Status.StateTransitionTimes[newInstance.Status.State] = &timeNow //nolint:staticcheck // https://github.com/ray-project/kuberay/pull/2288
+		newInstance.Status.StateTransitionTimes[newInstance.Status.State] = &timeNow
 	}
 
 	return newInstance, nil
@@ -1511,7 +1456,7 @@ func (r *RayClusterReconciler) updateHeadInfo(ctx context.Context, instance *ray
 
 func (r *RayClusterReconciler) reconcileAutoscalerServiceAccount(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
-	if !utils.IsAutoscalingEnabled(instance) {
+	if !utils.IsAutoscalingEnabled(&instance.Spec) {
 		return nil
 	}
 
@@ -1568,7 +1513,7 @@ func (r *RayClusterReconciler) reconcileAutoscalerServiceAccount(ctx context.Con
 
 func (r *RayClusterReconciler) reconcileAutoscalerRole(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
-	if !utils.IsAutoscalingEnabled(instance) {
+	if !utils.IsAutoscalingEnabled(&instance.Spec) {
 		return nil
 	}
 
@@ -1610,7 +1555,7 @@ func (r *RayClusterReconciler) reconcileAutoscalerRole(ctx context.Context, inst
 
 func (r *RayClusterReconciler) reconcileAutoscalerRoleBinding(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
-	if !utils.IsAutoscalingEnabled(instance) {
+	if !utils.IsAutoscalingEnabled(&instance.Spec) {
 		return nil
 	}
 
@@ -1662,8 +1607,26 @@ func (r *RayClusterReconciler) updateRayClusterStatus(ctx context.Context, origi
 	err := r.Status().Update(ctx, newInstance)
 	if err != nil {
 		logger.Info("Error updating status", "name", originalRayClusterInstance.Name, "error", err, "RayCluster", newInstance)
+	} else {
+		emitRayClusterMetrics(r.options.RayClusterMetricsManager, newInstance.Name, newInstance.Namespace, originalRayClusterInstance.Status, newInstance.Status, newInstance.CreationTimestamp.Time)
 	}
+
 	return inconsistent, err
+}
+
+func emitRayClusterMetrics(rayClusterMetricsManager *metrics.RayClusterMetricsManager, clusterName, namespace string, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
+	if rayClusterMetricsManager == nil {
+		return
+	}
+	emitRayClusterProvisionedDuration(rayClusterMetricsManager, clusterName, namespace, oldStatus, newStatus, creationTimestamp)
+}
+
+func emitRayClusterProvisionedDuration(RayClusterMetricsObserver metrics.RayClusterMetricsObserver, clusterName, namespace string, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
+	// Emit kuberay_cluster_provisioned_duration_seconds when a RayCluster's RayClusterProvisioned status transitions from false (or unset) to true
+	if !meta.IsStatusConditionTrue(oldStatus.Conditions, string(rayv1.RayClusterProvisioned)) &&
+		meta.IsStatusConditionTrue(newStatus.Conditions, string(rayv1.RayClusterProvisioned)) {
+		RayClusterMetricsObserver.ObserveRayClusterProvisionedDuration(clusterName, namespace, time.Since(creationTimestamp).Seconds())
+	}
 }
 
 // sumGPUs sums the GPUs in the given resource list.
@@ -1677,4 +1640,17 @@ func sumGPUs(resources map[corev1.ResourceName]resource.Quantity) resource.Quant
 	}
 
 	return totalGPUs
+}
+
+// setDefaults sets some default values for the RayCluster
+func setDefaults(instance *rayv1.RayCluster) {
+	if instance.Spec.HeadGroupSpec.RayStartParams == nil {
+		instance.Spec.HeadGroupSpec.RayStartParams = map[string]string{}
+	}
+
+	for i := range instance.Spec.WorkerGroupSpecs {
+		if instance.Spec.WorkerGroupSpecs[i].RayStartParams == nil {
+			instance.Spec.WorkerGroupSpecs[i].RayStartParams = map[string]string{}
+		}
+	}
 }
