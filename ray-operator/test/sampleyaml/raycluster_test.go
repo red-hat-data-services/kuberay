@@ -5,11 +5,10 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	. "github.com/ray-project/kuberay/ray-operator/test/support"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestRayCluster(t *testing.T) {
@@ -70,6 +69,7 @@ func TestRayCluster(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			test := With(t)
 			g := NewWithT(t)
+			g.ConfigureWithT(WithRayClusterResourceLogger(test))
 
 			yamlFilePath := path.Join(GetSampleYAMLDir(test), tt.name)
 			namespace := test.NewTestNamespace()
@@ -80,7 +80,7 @@ func TestRayCluster(t *testing.T) {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(rayCluster).NotTo(BeNil())
 
-			test.T().Logf("Waiting for RayCluster %s/%s to be ready", namespace.Name, rayCluster.Name)
+			LogWithTimestamp(test.T(), "Waiting for RayCluster %s/%s to be ready", namespace.Name, rayCluster.Name)
 			g.Eventually(RayCluster(test, namespace.Name, rayCluster.Name), TestTimeoutMedium).
 				Should(WithTransform(StatusCondition(rayv1.HeadPodReady), MatchCondition(metav1.ConditionTrue, rayv1.HeadPodRunningAndReady)))
 			g.Eventually(RayCluster(test, namespace.Name, rayCluster.Name), TestTimeoutMedium).

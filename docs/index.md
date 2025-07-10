@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 MD033 -->
 # Welcome
 
 <p align="center">
@@ -48,13 +49,12 @@ by some organizations to back user interfaces for KubeRay resource management.
 * [Prometheus and Grafana](https://docs.ray.io/en/master/cluster/kubernetes/k8s-ecosystem/prometheus-grafana.html#kuberay-prometheus-grafana)
 * [Volcano](https://docs.ray.io/en/master/cluster/kubernetes/k8s-ecosystem/volcano.html)
 * [MCAD](guidance/kuberay-with-MCAD.md)
-* [Kubeflow](https://docs.ray.io/en/master/cluster/kubernetes/k8s-ecosystem/kubeflow.html)
 
 ## Security
 
 **Security and isolation must be enforced outside of the Ray Cluster.** Restrict network access with Kubernetes or other external controls. Refer to [**Ray security documentation**](https://docs.ray.io/en/master/ray-security/index.html) for more guidance on what controls to implement.
 
-Please report security issues to security@anyscale.com.
+Please report security issues to <security@anyscale.com>.
 
 ## The Ray docs
 
