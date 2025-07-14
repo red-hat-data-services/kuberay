@@ -1,19 +1,19 @@
 package batchscheduler
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 
 	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
+	schedulerinterface "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/interface"
+	schedulerplugins "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/scheduler-plugins"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/volcano"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/yunikorn"
-
-	"k8s.io/client-go/rest"
-
-	schedulerinterface "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/interface"
 )
 
 type SchedulerManager struct {
@@ -25,14 +25,14 @@ type SchedulerManager struct {
 }
 
 // NewSchedulerManager maintains a specific scheduler plugin based on config
-func NewSchedulerManager(rayConfigs configapi.Configuration, config *rest.Config) (*SchedulerManager, error) {
+func NewSchedulerManager(ctx context.Context, rayConfigs configapi.Configuration, config *rest.Config) (*SchedulerManager, error) {
 	// init the scheduler factory from config
 	factory, err := getSchedulerFactory(rayConfigs)
 	if err != nil {
 		return nil, err
 	}
 
-	scheduler, err := factory.New(config)
+	scheduler, err := factory.New(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +59,8 @@ func getSchedulerFactory(rayConfigs configapi.Configuration) (schedulerinterface
 			factory = &volcano.VolcanoBatchSchedulerFactory{}
 		case yunikorn.GetPluginName():
 			factory = &yunikorn.YuniKornSchedulerFactory{}
+		case schedulerplugins.GetPluginName():
+			factory = &schedulerplugins.KubeSchedulerFactory{}
 		default:
 			return nil, fmt.Errorf("the scheduler is not supported, name=%s", rayConfigs.BatchScheduler)
 		}
