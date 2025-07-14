@@ -45,8 +45,7 @@
     - source .buildkite/setup-env.sh
     - kind create cluster --wait 900s --config ./ci/kind-config-buildkite.yml
     - kubectl config set clusters.kind-kind.server https://docker:6443
-    # Deploy previous KubeRay operator release (v1.2.2) using helm
-    - echo Deploying KubeRay operator
+    # Build nightly KubeRay operator image
     - pushd ray-operator
     - bash ../.buildkite/build-start-operator.sh
     - kubectl wait --timeout=90s --for=condition=Available=true deployment kuberay-operator
