@@ -3,6 +3,9 @@ ARG SOURCE_CODE=.
 
 FROM registry.access.redhat.com/ubi9/go-toolset@sha256:3f552f246b4bd5bdfb4da0812085d381d00d3625769baecaed58c2667d344e5c AS builder
 
+ARG TARGETOS
+ARG TARGETARCH
+
 WORKDIR /workspace
 USER root
 
@@ -23,7 +26,7 @@ COPY pkg/webhooks pkg/webhooks
 # Build
 USER root
 
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOEXPERIMENT=strictfipsruntime go build -tags strictfipsruntime -a -o manager main.go
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} GOEXPERIMENT=strictfipsruntime go build -tags strictfipsruntime -a -o manager main.go
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:e6b39b0a2cd88c0d904552eee0dca461bc74fe86fda3648ca4f8150913c79d0f
 
