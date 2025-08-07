@@ -27,9 +27,6 @@ spec:
     value: Dockerfile.rhoai
   - name: path-context
     value: ray-operator
-  - name: prefetch-input
-    value: |
-      [{"type": "gomod", "path": "ray-operator"}]
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
