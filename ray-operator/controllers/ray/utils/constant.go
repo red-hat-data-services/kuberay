@@ -27,6 +27,9 @@ const (
 	NumWorkerGroupsKey                       = "ray.io/num-worker-groups"
 	KubeRayVersion                           = "ray.io/kuberay-version"
 
+	// NetworkPolicy annotation key - when present on a RayCluster, enables NetworkPolicy creation
+	EnableSecureTrustedNetworkAnnotationKey = "odh.ray.io/secure-trusted-network"
+
 	// In KubeRay, the Ray container must be the first application container in a head or worker Pod.
 	RayContainerIndex = 0
 
@@ -311,6 +314,11 @@ const (
 	UpdatedServeApplications        K8sEventType = "UpdatedServeApplications"
 	FailedToUpdateHeadPodServeLabel K8sEventType = "FailedToUpdateHeadPodServeLabel"
 	FailedToUpdateServeApplications K8sEventType = "FailedToUpdateServeApplications"
+
+	// NetworkPolicy event list
+	CreatedNetworkPolicy        K8sEventType = "CreatedNetworkPolicy"
+	DeletedNetworkPolicy        K8sEventType = "DeletedNetworkPolicy"
+	FailedToCreateNetworkPolicy K8sEventType = "FailedToCreateNetworkPolicy"
 
 	// Generic Pod event list
 	DeletedPod                  K8sEventType = "DeletedPod"
