@@ -1,6 +1,6 @@
 module github.com/ray-project/kuberay
 
-go 1.24.2
+go 1.24.0
 
 require (
 	github.com/dustinkirkland/golang-petname v0.0.0-20240428194347-eebcea082ee0
@@ -17,7 +17,7 @@ require (
 	github.com/onsi/gomega v1.37.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.22.0
-	github.com/ray-project/kuberay/ray-operator v1.4.0
+	github.com/ray-project/kuberay/ray-operator v1.4.2
 	github.com/rs/cors v1.11.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
