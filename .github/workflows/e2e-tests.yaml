@@ -5,6 +5,7 @@ on:
     branches:
       - '**'
   push:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - dev
       - 'release-*'
@@ -16,6 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     steps:
         - name: Checkout code
           uses: actions/checkout@v3
@@ -48,7 +50,17 @@ jobs:
             make deploy -e IMG="${IMG}"
             kubectl wait --timeout=90s --for=condition=Available=true deployment -n default kuberay-operator
 
+        - name: Update resource requirements for e2e tests
+          if: steps.deploy.outcome == 'success'
+          run: |
+            echo "Updating resource requirements using Go AST manipulation..."
+            cd scripts
+            go build -o update-resources update-resources.go
+            ./update-resources -scenario pr ../ray-operator/test/support/support.go
+            echo "Resource requirements updated successfully for e2e tests."
+
         - name: Run e2e tests
+          if: steps.deploy.outcome == 'success'
           run: |
             export KUBERAY_TEST_TIMEOUT_SHORT=3m
             export KUBERAY_TEST_TIMEOUT_MEDIUM=10m
@@ -58,6 +70,17 @@ jobs:
             cd ray-operator
             go test -timeout 60m -v ./test/e2e -json 2>&1 | tee ./gotest.log | gotestfmt
 
+        - name: Run e2e rayjob tests
+          if: steps.deploy.outcome == 'success'
+          run: |
+            export KUBERAY_TEST_TIMEOUT_SHORT=3m
+            export KUBERAY_TEST_TIMEOUT_MEDIUM=10m
+            export KUBERAY_TEST_TIMEOUT_LONG=15m
+
+            set -euo pipefail
+            cd ray-operator
+            go test -timeout 60m -v ./test/e2erayjob -json 2>&1 | tee ./gotest.log | gotestfmt
+
         - name: Print KubeRay operator logs
           if: steps.deploy.outcome == 'success'
           run: |
@@ -65,6 +88,7 @@ jobs:
             kubectl logs -n default --tail -1 -l app.kubernetes.io/name=kuberay-operator app.kubernetes.io/name=kuberay | tee ./kuberay-operator.log
 
         - name: Upload logs
+          if: failure()
           uses: actions/upload-artifact@v4
           with:
             name: logs
