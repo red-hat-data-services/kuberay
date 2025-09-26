@@ -1,9 +1,12 @@
 name: Dispatch
 on:
+  push:
+    branches:
+    - dev
   workflow_dispatch:
 
 jobs:
-  dispatch:
+  run-e2e-upgrade-on-bigger-runner:
     runs-on: ubuntu-latest
     permissions:
       contents: read

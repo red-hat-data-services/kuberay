@@ -1,6 +1,9 @@
 name: Build and Push Test Image
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
     inputs:
       E2E_TEST_IMAGE_VERSION:
