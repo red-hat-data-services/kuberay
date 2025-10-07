@@ -56,7 +56,7 @@ jobs:
             echo "Updating resource requirements using Go AST manipulation..."
             cd scripts
             go build -o update-resources update-resources.go
-            ./update-resources -scenario pr ../ray-operator/test/support/support.go
+            ./update-resources -scenario pr ../ray-operator/test/e2e/support.go
             echo "Resource requirements updated successfully for e2e tests."
 
         - name: Run e2e tests
