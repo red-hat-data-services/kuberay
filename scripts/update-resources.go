@@ -156,12 +156,13 @@ func updateResourcesInFile(filePath string, spec ResourceSpec) error {
 func processFunctionDecl(funcDecl *ast.FuncDecl, spec ResourceSpec) {
 	functionName := funcDecl.Name.Name
 
-	// Only process HeadPodTemplate and WorkerPodTemplate functions
-	if !strings.Contains(functionName, "HeadPodTemplate") && !strings.Contains(functionName, "WorkerPodTemplate") {
+	// Only process HeadPodTemplate and WorkerPodTemplate functions (case-insensitive)
+	lowerFunctionName := strings.ToLower(functionName)
+	if !strings.Contains(lowerFunctionName, "headpodtemplate") && !strings.Contains(lowerFunctionName, "workerpodtemplate") {
 		return
 	}
 
-	isHeadFunction := strings.Contains(functionName, "HeadPodTemplate")
+	isHeadFunction := strings.Contains(lowerFunctionName, "headpodtemplate")
 
 	// Track the order of resource.MustParse calls within WithRequests and WithLimits
 	ast.Inspect(funcDecl, func(n ast.Node) bool {
@@ -300,13 +301,14 @@ func printTestFileConfirmation(filePath string) {
 		inWorkerFunction := false
 
 		for i, line := range lines {
-			if strings.Contains(line, "func HeadPodTemplateApplyConfiguration") {
+			lowerLine := strings.ToLower(line)
+			if strings.Contains(lowerLine, "func headpodtemplateapplyconfiguration") {
 				inHeadFunction = true
 				inWorkerFunction = false
-			} else if strings.Contains(line, "func WorkerPodTemplateApplyConfiguration") {
+			} else if strings.Contains(lowerLine, "func workerpodtemplateapplyconfiguration") {
 				inHeadFunction = false
 				inWorkerFunction = true
-			} else if strings.Contains(line, "func ") && !strings.Contains(line, "HeadPodTemplate") && !strings.Contains(line, "WorkerPodTemplate") {
+			} else if strings.Contains(line, "func ") && !strings.Contains(lowerLine, "headpodtemplate") && !strings.Contains(lowerLine, "workerpodtemplate") {
 				inHeadFunction = false
 				inWorkerFunction = false
 			}
