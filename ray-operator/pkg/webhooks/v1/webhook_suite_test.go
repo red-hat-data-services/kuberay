@@ -95,7 +95,10 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupRayClusterWebhookWithManager(mgr)
+	err = SetupRayClusterDefaulterWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupRayClusterValidatorWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
 	//+kubebuilder:scaffold:webhook
@@ -123,6 +126,96 @@ var _ = BeforeSuite(func() {
 	}).Should(Succeed())
 })
 
+var _ = Describe("RayCluster mutating webhook", func() {
+	Context("when annotation is not set", func() {
+		It("should automatically add the secure-trusted-network annotation", func() {
+			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
+			rayCluster := rayv1.RayCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      name,
+					// No annotations set initially
+				},
+				Spec: rayv1.RayClusterSpec{
+					HeadGroupSpec: rayv1.HeadGroupSpec{
+						RayStartParams: map[string]string{},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
+							},
+						},
+					},
+					WorkerGroupSpecs: []rayv1.WorkerGroupSpec{},
+				},
+			}
+
+			err := k8sClient.Create(context.TODO(), &rayCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the annotation was added by the mutating webhook
+			created := &rayv1.RayCluster{}
+			err = k8sClient.Get(context.TODO(), client.ObjectKey{Name: name, Namespace: "default"}, created)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created.Annotations).NotTo(BeNil())
+			Expect(created.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
+
+			// Cleanup
+			err = k8sClient.Delete(context.TODO(), created)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("when annotation is explicitly set to false", func() {
+		It("should override the annotation to true", func() {
+			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
+			rayCluster := rayv1.RayCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      name,
+					Annotations: map[string]string{
+						"odh.ray.io/secure-trusted-network": "false",
+					},
+				},
+				Spec: rayv1.RayClusterSpec{
+					HeadGroupSpec: rayv1.HeadGroupSpec{
+						RayStartParams: map[string]string{},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
+							},
+						},
+					},
+					WorkerGroupSpecs: []rayv1.WorkerGroupSpec{},
+				},
+			}
+
+			err := k8sClient.Create(context.TODO(), &rayCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the annotation was overridden to "true" by the mutating webhook
+			created := &rayv1.RayCluster{}
+			err = k8sClient.Get(context.TODO(), client.ObjectKey{Name: name, Namespace: "default"}, created)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created.Annotations).NotTo(BeNil())
+			Expect(created.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
+
+			// Cleanup
+			err = k8sClient.Delete(context.TODO(), created)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+})
+
 var _ = Describe("RayCluster validating webhook", func() {
 	Context("when name is invalid", func() {
 		It("should return error", func() {
@@ -133,9 +226,15 @@ var _ = Describe("RayCluster validating webhook", func() {
 				},
 				Spec: rayv1.RayClusterSpec{
 					HeadGroupSpec: rayv1.HeadGroupSpec{
+						RayStartParams: map[string]string{},
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
-								Containers: []corev1.Container{},
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
 							},
 						},
 					},
@@ -167,26 +266,44 @@ var _ = Describe("RayCluster validating webhook", func() {
 				},
 				Spec: rayv1.RayClusterSpec{
 					HeadGroupSpec: rayv1.HeadGroupSpec{
+						RayStartParams: map[string]string{},
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
-								Containers: []corev1.Container{},
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
 							},
 						},
 					},
 					WorkerGroupSpecs: []rayv1.WorkerGroupSpec{
 						{
-							GroupName: "group1",
+							GroupName:      "group1",
+							RayStartParams: map[string]string{},
 							Template: corev1.PodTemplateSpec{
 								Spec: corev1.PodSpec{
-									Containers: []corev1.Container{},
+									Containers: []corev1.Container{
+										{
+											Name:  "ray-worker",
+											Image: "rayproject/ray:latest",
+										},
+									},
 								},
 							},
 						},
 						{
-							GroupName: "group1",
+							GroupName:      "group1",
+							RayStartParams: map[string]string{},
 							Template: corev1.PodTemplateSpec{
 								Spec: corev1.PodSpec{
-									Containers: []corev1.Container{},
+									Containers: []corev1.Container{
+										{
+											Name:  "ray-worker",
+											Image: "rayproject/ray:latest",
+										},
+									},
 								},
 							},
 						},
