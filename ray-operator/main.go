@@ -29,6 +29,7 @@ import (
 	k8szap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
@@ -52,6 +53,7 @@ func init() {
 	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -276,6 +278,10 @@ func main() {
 	exitOnError(ray.NewNetworkPolicyController(mgr).SetupWithManager(mgr),
 		"unable to create controller", "controller", "NetworkPolicy")
 	setupLog.Info("NetworkPolicy controller registered (annotation-based activation)")
+	// Setup AuthenticationController
+	authController := ray.NewAuthenticationController(mgr, rayClusterOptions)
+	exitOnError(authController.SetupWithManager(mgr),
+		"unable to create controller", "controller", "Authentication")
 
 	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
 		exitOnError(webhooks.SetupRayClusterDefaulterWithManager(mgr),

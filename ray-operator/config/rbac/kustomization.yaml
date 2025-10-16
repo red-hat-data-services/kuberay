@@ -6,6 +6,10 @@ resources:
 - leader_election_role_binding.yaml
 - service_account.yaml
 - viewer_role.yaml
+- configmap-role.yaml
+- configmap-role-binding.yaml
+- gateway-api-role.yaml
+- gateway-api-role-binding.yaml
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

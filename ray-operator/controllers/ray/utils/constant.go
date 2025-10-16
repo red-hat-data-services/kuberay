@@ -343,6 +343,7 @@ const (
 	CreatedServiceAccount            K8sEventType = "CreatedServiceAccount"
 	FailedToCreateServiceAccount     K8sEventType = "FailedToCreateServiceAccount"
 	AutoscalerServiceAccountNotFound K8sEventType = "AutoscalerServiceAccountNotFound"
+	WaitingForServiceAccount         K8sEventType = "WaitingForServiceAccount"
 
 	// Role event list
 	CreatedRole        K8sEventType = "CreatedRole"
