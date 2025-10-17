@@ -27,6 +27,9 @@ const (
 	NumWorkerGroupsKey                       = "ray.io/num-worker-groups"
 	KubeRayVersion                           = "ray.io/kuberay-version"
 
+	// NetworkPolicy annotation key - when present on a RayCluster, enables NetworkPolicy creation
+	EnableSecureTrustedNetworkAnnotationKey = "odh.ray.io/secure-trusted-network"
+
 	// In KubeRay, the Ray container must be the first application container in a head or worker Pod.
 	RayContainerIndex = 0
 
