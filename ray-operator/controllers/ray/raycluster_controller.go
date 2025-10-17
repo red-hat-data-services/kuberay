@@ -1036,6 +1036,35 @@ func (r *RayClusterReconciler) createService(ctx context.Context, svc *corev1.Se
 
 func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
+
+	// Check if authentication is enabled and if the required ServiceAccount exists
+	// This prevents a race condition where the pod is created before the AuthenticationController
+	// has had a chance to create the ServiceAccount
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
+	if shouldEnableAuth {
+		namer := utils.NewResourceNamer(&instance)
+		saName := namer.ServiceAccountName(authMode)
+		sa := &corev1.ServiceAccount{}
+		if err := r.Get(ctx, client.ObjectKey{Name: saName, Namespace: instance.Namespace}, sa); err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("Waiting for AuthenticationController to create ServiceAccount, will retry",
+					"serviceAccount", saName,
+					"namespace", instance.Namespace,
+					"authMode", authMode)
+				r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.WaitingForServiceAccount),
+					"Waiting for ServiceAccount %s to be created by AuthenticationController", saName)
+				// Return error to trigger retry - the AuthenticationController will create the SA
+				return fmt.Errorf("waiting for ServiceAccount %s to be created for authentication", saName)
+			}
+			// Other errors (not NotFound) should be returned
+			return fmt.Errorf("failed to check ServiceAccount %s: %w", saName, err)
+		}
+		logger.Info("ServiceAccount exists, proceeding with pod creation",
+			"serviceAccount", saName,
+			"namespace", instance.Namespace)
+	}
+
 	// build the pod then create it
 	pod := r.buildHeadPod(ctx, instance)
 	// check if the batch scheduler integration is enabled
@@ -1099,6 +1128,35 @@ func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.
 	if r.isMTLSEnabled(&instance) {
 		logger.Info("mTLS is enabled, configuring mTLS for head pod")
 		r.configureMTLSForPod(&podConf, instance)
+	}
+
+	// Detect authentication mode and inject appropriate sidecar
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	logger.Info("Detected authentication mode for pod creation", "mode", authMode, "cluster", instance.Name)
+
+	namer := utils.NewResourceNamer(&instance)
+
+	// Both OAuth and OIDC modes now use the same OIDC sidecar (kube-rbac-proxy)
+	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
+	if shouldEnableAuth {
+		logger.Info("Injecting OIDC proxy sidecar (kube-rbac-proxy)", "cluster", instance.Name, "mode", authMode)
+
+		result := utils.InjectAuthSidecar(
+			&podConf.Spec,
+			&instance,
+			authMode,
+			GetOIDCProxySidecar,
+			GetOIDCProxyVolumes,
+			namer.ServiceAccountName(authMode),
+		)
+
+		if result.Injected {
+			logger.Info("Authentication sidecar injected successfully",
+				"cluster", instance.Name,
+				"authType", result.AuthType,
+				"serviceAccount", result.ServiceAccountName,
+				"containerCount", result.ContainerCount)
+		}
 	}
 
 	logger.Info("head pod labels", "labels", podConf.Labels)

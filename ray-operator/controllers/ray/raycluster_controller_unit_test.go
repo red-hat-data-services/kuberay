@@ -2642,8 +2642,8 @@ func Test_ShouldDeletePod(t *testing.T) {
 
 func Test_PodHasMTLSConfiguration(t *testing.T) {
 	tests := []struct {
-		name     string
 		pod      corev1.Pod
+		name     string
 		expected bool
 	}{
 		{
