@@ -29,7 +29,7 @@ vars:
 
 resources:
 - ray_operator_scc.yaml
-- ../default
+- ../default-with-webhooks
 
 commonLabels:
   app.kubernetes.io/name: kuberay
@@ -37,6 +37,13 @@ commonLabels:
 
 patches:
 # - path: remove_default_namespace.yaml
+- path: certificate-dns-patch.yaml
+  target:
+    group: cert-manager.io
+    version: v1
+    kind: Certificate
+    name: serving-cert
+- path: webhook-namespace-patch.yaml
 - path: kuberay-operator-image-patch.yaml
   target:
     group: apps
