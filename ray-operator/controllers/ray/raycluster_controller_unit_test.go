@@ -2640,6 +2640,134 @@ func Test_ShouldDeletePod(t *testing.T) {
 	}
 }
 
+func Test_PodHasMTLSConfiguration(t *testing.T) {
+	tests := []struct {
+		pod      corev1.Pod
+		name     string
+		expected bool
+	}{
+		{
+			name: "Pod with mTLS configuration",
+			pod: corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "ray-head",
+							Env: []corev1.EnvVar{
+								{Name: "RAY_USE_TLS", Value: "1"},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "ray-tls-vol",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "ray-head-secret",
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Pod without mTLS volume",
+			pod: corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "ray-head",
+							Env: []corev1.EnvVar{
+								{Name: "RAY_USE_TLS", Value: "1"},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Pod without RAY_USE_TLS environment variable",
+			pod: corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "ray-head",
+							Env:  []corev1.EnvVar{},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "ray-tls-vol",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "ray-head-secret",
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Pod with RAY_USE_TLS=0",
+			pod: corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "ray-head",
+							Env: []corev1.EnvVar{
+								{Name: "RAY_USE_TLS", Value: "0"},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "ray-tls-vol",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "ray-head-secret",
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Pod with no containers",
+			pod: corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{},
+					Volumes: []corev1.Volume{
+						{
+							Name: "ray-tls-vol",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "ray-head-secret",
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			hasMTLS := podHasMTLSConfiguration(testCase.pod)
+			assert.Equal(t, testCase.expected, hasMTLS, "unexpected mTLS configuration detection result")
+		})
+	}
+}
+
 func Test_RedisCleanupFeatureFlag(t *testing.T) {
 	setupTest(t)
 

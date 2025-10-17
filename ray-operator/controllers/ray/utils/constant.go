@@ -315,6 +315,11 @@ const (
 	FailedToUpdateHeadPodServeLabel K8sEventType = "FailedToUpdateHeadPodServeLabel"
 	FailedToUpdateServeApplications K8sEventType = "FailedToUpdateServeApplications"
 
+	// NetworkPolicy event list
+	CreatedNetworkPolicy        K8sEventType = "CreatedNetworkPolicy"
+	DeletedNetworkPolicy        K8sEventType = "DeletedNetworkPolicy"
+	FailedToCreateNetworkPolicy K8sEventType = "FailedToCreateNetworkPolicy"
+
 	// Generic Pod event list
 	DeletedPod                  K8sEventType = "DeletedPod"
 	FailedToDeletePod           K8sEventType = "FailedToDeletePod"
@@ -338,6 +343,7 @@ const (
 	CreatedServiceAccount            K8sEventType = "CreatedServiceAccount"
 	FailedToCreateServiceAccount     K8sEventType = "FailedToCreateServiceAccount"
 	AutoscalerServiceAccountNotFound K8sEventType = "AutoscalerServiceAccountNotFound"
+	WaitingForServiceAccount         K8sEventType = "WaitingForServiceAccount"
 
 	// Role event list
 	CreatedRole        K8sEventType = "CreatedRole"
