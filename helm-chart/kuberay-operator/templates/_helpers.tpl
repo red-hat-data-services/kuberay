@@ -166,6 +166,15 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - secrets
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - serviceaccounts
   verbs:
   - create
@@ -194,6 +203,27 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - issuers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - coordination.k8s.io
   resources:
