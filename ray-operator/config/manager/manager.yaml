@@ -61,7 +61,11 @@ spec:
           requests:
             cpu: 100m
             memory: 512Mi
-        # env:
+        env:
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
           # If not set or set to true, kuberay auto injects an init container waiting for ray GCS.
           # If false, you will need to inject your own init container to ensure ray GCS is up before the ray workers start.
           # Warning: we highly recommend setting to true and let kuberay handle for you.
@@ -76,4 +80,3 @@ spec:
           # environment variable is not set, requeue after the default value (300).
           # - name: RAYCLUSTER_DEFAULT_REQUEUE_SECONDS_ENV
           #   value: "300"
-      terminationGracePeriodSeconds: 10

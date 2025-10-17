@@ -264,6 +264,11 @@ func main() {
 	exitOnError(ray.NewRayJobReconciler(ctx, mgr, rayJobOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayJob")
 
+	// NetworkPolicy controller (always registered, uses annotation-based activation)
+	exitOnError(ray.NewNetworkPolicyController(mgr).SetupWithManager(mgr),
+		"unable to create controller", "controller", "NetworkPolicy")
+	setupLog.Info("NetworkPolicy controller registered (annotation-based activation)")
+
 	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
 		exitOnError(webhooks.SetupRayClusterDefaulterWithManager(mgr),
 			"unable to create webhook", "webhook", "RayCluster-Defaulter")
