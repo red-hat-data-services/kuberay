@@ -33,10 +33,12 @@ func (d *RayClusterDefaulter) Default(_ context.Context, obj runtime.Object) err
 		rayCluster.Annotations = make(map[string]string)
 	}
 
-	// Only set the secure network annotation on OpenShift
+	// Set the secure network annotation based on platform
 	if d.isOpenShift() {
 		rayCluster.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey] = "true"
 		rayclusterlog.Info("enforcing secure trusted network on OpenShift", "name", rayCluster.Name, "namespace", rayCluster.Namespace)
+	} else {
+		rayCluster.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey] = "false"
 	}
 
 	return nil
