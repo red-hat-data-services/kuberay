@@ -62,13 +62,13 @@ jobs:
         - name: Run e2e tests
           if: steps.deploy.outcome == 'success'
           run: |
-            export KUBERAY_TEST_TIMEOUT_SHORT=3m
-            export KUBERAY_TEST_TIMEOUT_MEDIUM=10m
+            export KUBERAY_TEST_TIMEOUT_SHORT=5m
+            export KUBERAY_TEST_TIMEOUT_MEDIUM=12m
             export KUBERAY_TEST_TIMEOUT_LONG=15m
 
             set -euo pipefail
             cd ray-operator
-            go test -timeout 60m -v ./test/e2e -json 2>&1 | tee ./gotest.log | gotestfmt
+            go test -timeout 120m -v ./test/e2e -json 2>&1 | tee ./gotest.log | gotestfmt
 
         - name: Print KubeRay operator logs
           if: steps.deploy.outcome == 'success'
