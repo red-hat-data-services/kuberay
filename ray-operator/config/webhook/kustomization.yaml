@@ -1,8 +1,6 @@
 resources:
-- manifests.yaml
 - service.yaml
-
-namePrefix: kuberay-
+- manifests.yaml
 
 configurations:
 - kustomizeconfig.yaml
