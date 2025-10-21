@@ -13,9 +13,11 @@ import (
 	. "github.com/onsi/gomega"
 	admissionv1beta1 "k8s.io/api/admission/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	//+kubebuilder:scaffold:imports
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,6 +33,17 @@ import (
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
+
+// mockOpenShiftRESTMapper is a mock RESTMapper that simulates OpenShift environment
+// by successfully returning a RESTMapping for the Route resource
+type mockOpenShiftRESTMapper struct {
+	meta.RESTMapper
+}
+
+func (m *mockOpenShiftRESTMapper) RESTMapping(_ schema.GroupKind, _ ...string) (*meta.RESTMapping, error) {
+	// Simulate OpenShift by returning success for Route resource
+	return &meta.RESTMapping{}, nil
+}
 
 var (
 	cfg       *rest.Config
@@ -127,8 +140,8 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = Describe("RayCluster mutating webhook", func() {
-	Context("when annotation is not set", func() {
-		It("should automatically add the secure-trusted-network annotation", func() {
+	Context("when running on non-OpenShift (kind)", func() {
+		It("should set the secure-trusted-network annotation to false", func() {
 			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
 			rayCluster := rayv1.RayCluster{
 				ObjectMeta: metav1.ObjectMeta{
@@ -157,12 +170,12 @@ var _ = Describe("RayCluster mutating webhook", func() {
 			err := k8sClient.Create(context.TODO(), &rayCluster)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify the annotation was added by the mutating webhook
+			// Verify the annotation was set to "false" by the mutating webhook (not OpenShift)
 			created := &rayv1.RayCluster{}
 			err = k8sClient.Get(context.TODO(), client.ObjectKey{Name: name, Namespace: "default"}, created)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(created.Annotations).NotTo(BeNil())
-			Expect(created.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
+			Expect(created.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("false"))
 
 			// Cleanup
 			err = k8sClient.Delete(context.TODO(), created)
@@ -170,16 +183,14 @@ var _ = Describe("RayCluster mutating webhook", func() {
 		})
 	})
 
-	Context("when annotation is explicitly set to false", func() {
-		It("should override the annotation to true", func() {
+	Context("when running on OpenShift", func() {
+		It("should set the secure-trusted-network annotation to true", func() {
 			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
-			rayCluster := rayv1.RayCluster{
+			rayCluster := &rayv1.RayCluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      name,
-					Annotations: map[string]string{
-						"odh.ray.io/secure-trusted-network": "false",
-					},
+					// No annotations set initially
 				},
 				Spec: rayv1.RayClusterSpec{
 					HeadGroupSpec: rayv1.HeadGroupSpec{
@@ -199,19 +210,19 @@ var _ = Describe("RayCluster mutating webhook", func() {
 				},
 			}
 
-			err := k8sClient.Create(context.TODO(), &rayCluster)
+			// Create a mock RESTMapper that simulates OpenShift (returns Route resource)
+			mockRESTMapper := &mockOpenShiftRESTMapper{}
+			defaulter := &RayClusterDefaulter{
+				RESTMapper: mockRESTMapper,
+			}
+
+			// Call the Default method directly
+			err := defaulter.Default(context.TODO(), rayCluster)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify the annotation was overridden to "true" by the mutating webhook
-			created := &rayv1.RayCluster{}
-			err = k8sClient.Get(context.TODO(), client.ObjectKey{Name: name, Namespace: "default"}, created)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(created.Annotations).NotTo(BeNil())
-			Expect(created.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
-
-			// Cleanup
-			err = k8sClient.Delete(context.TODO(), created)
-			Expect(err).NotTo(HaveOccurred())
+			// Verify the annotation was set to "true"
+			Expect(rayCluster.Annotations).NotTo(BeNil())
+			Expect(rayCluster.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
 		})
 	})
 })
