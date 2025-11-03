@@ -302,6 +302,40 @@ func (r *NetworkPolicyController) buildHeadNetworkPolicy(ctx context.Context, in
 		logger.V(1).Info("Skipping monitoring access rule - monitoring namespace not configured in DSCI")
 	}
 
+	// Rule 4b: Gateway access (optional, for Gateway API/RHOAI v3.0+ setups)
+	// Allows Gateway pods to access dashboard on port 8265
+	gatewayNamespace := os.Getenv("GATEWAY_NAMESPACE")
+	if gatewayNamespace == "" && r.isOpenShift() {
+		gatewayNamespace = "openshift-ingress"
+	}
+
+	if gatewayNamespace != "" {
+		logger.V(1).Info("Adding Gateway access rule", "namespace", gatewayNamespace)
+		gatewayRule := networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      corev1.LabelMetadataName,
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{gatewayNamespace},
+							},
+						},
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+					Port:     &[]intstr.IntOrString{intstr.FromInt(8265)}[0], // Dashboard
+				},
+			},
+		}
+		// Insert gateway rule before secured ports rule (which is now last)
+		ingressRules = append(ingressRules[:len(ingressRules)-1], gatewayRule, ingressRules[len(ingressRules)-1])
+	}
+
 	// Add RayJob submitter peer if RayCluster is owned by RayJob
 	if rayJobPeer := r.buildRayJobPeer(instance); rayJobPeer != nil {
 		ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
