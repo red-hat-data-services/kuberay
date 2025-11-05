@@ -25,8 +25,10 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -34,6 +36,7 @@ import (
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
@@ -47,7 +50,44 @@ func setupScheme() *runtime.Scheme {
 	_ = configv1.AddToScheme(s)
 	_ = routev1.AddToScheme(s)
 	_ = gatewayv1.AddToScheme(s)
+	_ = gatewayv1beta1.AddToScheme(s)
 	return s
+}
+
+// mockRESTMapper is a simple mock implementation of meta.RESTMapper for testing
+type mockRESTMapper struct {
+	hasRouteAPI bool
+}
+
+func (m *mockRESTMapper) KindFor(_ schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+	return schema.GroupVersionKind{}, nil
+}
+
+func (m *mockRESTMapper) KindsFor(_ schema.GroupVersionResource) ([]schema.GroupVersionKind, error) {
+	return nil, nil
+}
+
+func (m *mockRESTMapper) ResourceFor(_ schema.GroupVersionResource) (schema.GroupVersionResource, error) {
+	return schema.GroupVersionResource{}, nil
+}
+
+func (m *mockRESTMapper) ResourcesFor(_ schema.GroupVersionResource) ([]schema.GroupVersionResource, error) {
+	return nil, nil
+}
+
+func (m *mockRESTMapper) RESTMapping(gk schema.GroupKind, _ ...string) (*meta.RESTMapping, error) {
+	if gk.Group == routev1.GroupVersion.Group && gk.Kind == "Route" && !m.hasRouteAPI {
+		return nil, &meta.NoKindMatchError{}
+	}
+	return &meta.RESTMapping{}, nil
+}
+
+func (m *mockRESTMapper) RESTMappings(_ schema.GroupKind, _ ...string) ([]*meta.RESTMapping, error) {
+	return nil, nil
+}
+
+func (m *mockRESTMapper) ResourceSingularizer(_ string) (singular string, err error) {
+	return "", nil
 }
 
 func TestDetectAuthenticationMode(t *testing.T) {
@@ -452,6 +492,8 @@ func TestEnsureOIDCConfigMap(t *testing.T) {
 }
 
 func TestEnsureHttpRoute(t *testing.T) {
+	t.Setenv("APPLICATION_NAMESPACE", "platform-namespace")
+
 	tests := []struct {
 		existingHttpRoute *gatewayv1.HTTPRoute
 		name              string
@@ -468,8 +510,12 @@ func TestEnsureHttpRoute(t *testing.T) {
 			name: "HTTPRoute exists - should update",
 			existingHttpRoute: &gatewayv1.HTTPRoute{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-cluster",
-					Namespace: "default",
+					Name:      "default-test-cluster",
+					Namespace: "platform-namespace",
+					Labels: map[string]string{
+						"ray.io/cluster-namespace": "default",
+						"ray.io/cluster-name":      "test-cluster",
+					},
 				},
 			},
 			expectCreation: false,
@@ -490,6 +536,13 @@ func TestEnsureHttpRoute(t *testing.T) {
 				Spec: rayv1.RayClusterSpec{
 					HeadGroupSpec: rayv1.HeadGroupSpec{
 						ServiceType: corev1.ServiceTypeClusterIP,
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{Name: "ray-head"},
+								},
+							},
+						},
 					},
 				},
 			}
@@ -506,21 +559,23 @@ func TestEnsureHttpRoute(t *testing.T) {
 				WithRuntimeObjects(objects...).
 				Build()
 
+			mapper := &mockRESTMapper{hasRouteAPI: true}
 			controller := &AuthenticationController{
-				Client:   fakeClient,
-				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Client:     fakeClient,
+				Scheme:     s,
+				RESTMapper: mapper,
+				Recorder:   record.NewFakeRecorder(10),
 			}
 
 			// Execute
 			err := controller.ensureHttpRoute(ctx, cluster, ctrl.Log)
 			require.NoError(t, err)
 
-			// Verify
+			// Verify - HTTPRoute is now in platform namespace with new naming
 			route := &gatewayv1.HTTPRoute{}
 			err = fakeClient.Get(ctx, types.NamespacedName{
-				Name:      "test-cluster",
-				Namespace: "default",
+				Name:      "default-test-cluster",
+				Namespace: "platform-namespace",
 			}, route)
 			require.NoError(t, err)
 
@@ -854,6 +909,8 @@ func TestReconcile_ManagedByExternalController(t *testing.T) {
 
 func TestCleanupOIDCResources(t *testing.T) {
 	ctx := context.Background()
+	t.Setenv("APPLICATION_NAMESPACE", "platform-namespace")
+
 	namer := utils.NewResourceNamer(&rayv1.RayCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
@@ -877,7 +934,17 @@ func TestCleanupOIDCResources(t *testing.T) {
 				},
 				&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-cluster",
+						Name:      "default-test-cluster", // Updated: namespace-cluster naming
+						Namespace: "platform-namespace",   // Updated: in platform namespace
+						Labels: map[string]string{
+							"ray.io/cluster-namespace": "default",
+							"ray.io/cluster-name":      "test-cluster",
+						},
+					},
+				},
+				&gatewayv1beta1.ReferenceGrant{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "kuberay-gateway-access", // Shared name
 						Namespace: "default",
 					},
 				},
@@ -888,7 +955,7 @@ func TestCleanupOIDCResources(t *testing.T) {
 					},
 				},
 			},
-			expectDeleted: []string{"configmap", "httproute", "serviceaccount"},
+			expectDeleted: []string{"configmap", "httproute", "referencegrant", "serviceaccount"},
 		},
 		{
 			name:              "No resources to delete - should not error",
@@ -914,10 +981,12 @@ func TestCleanupOIDCResources(t *testing.T) {
 				WithRuntimeObjects(objects...).
 				Build()
 
+			mapper := &mockRESTMapper{hasRouteAPI: true}
 			controller := &AuthenticationController{
-				Client:   fakeClient,
-				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Client:     fakeClient,
+				Scheme:     s,
+				RESTMapper: mapper,
+				Recorder:   record.NewFakeRecorder(10),
 			}
 
 			// Execute cleanup
@@ -934,13 +1003,21 @@ func TestCleanupOIDCResources(t *testing.T) {
 				}, configMap)
 				assert.True(t, errors.IsNotFound(err), "ConfigMap should be deleted")
 
-				// Check HTTPRoute is deleted
+				// Check HTTPRoute is deleted from platform namespace
 				httpRoute := &gatewayv1.HTTPRoute{}
 				err = fakeClient.Get(ctx, types.NamespacedName{
-					Name:      "test-cluster",
-					Namespace: "default",
+					Name:      "default-test-cluster", // Updated: namespace-cluster naming
+					Namespace: "platform-namespace",   // Updated: platform namespace
 				}, httpRoute)
-				assert.True(t, errors.IsNotFound(err), "HTTPRoute should be deleted")
+				assert.True(t, errors.IsNotFound(err), "HTTPRoute should be deleted from platform namespace")
+
+				// Check ReferenceGrant is deleted (last cluster)
+				referenceGrant := &gatewayv1beta1.ReferenceGrant{}
+				err = fakeClient.Get(ctx, types.NamespacedName{
+					Name:      "kuberay-gateway-access", // Shared name
+					Namespace: "default",
+				}, referenceGrant)
+				assert.True(t, errors.IsNotFound(err), "ReferenceGrant should be deleted (last cluster)")
 
 				// Check ServiceAccount is deleted
 				sa := &corev1.ServiceAccount{}

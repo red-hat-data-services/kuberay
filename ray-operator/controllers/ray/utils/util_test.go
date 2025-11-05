@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
@@ -1226,4 +1227,117 @@ func TestGetContainerCommand(t *testing.T) {
 			assert.Equal(t, test.expected, GetContainerCommand(test.additionalOptions))
 		})
 	}
+}
+
+func TestGenerateDNS1123Name(t *testing.T) {
+	tests := []struct {
+		name           string
+		baseName       string
+		expectedPrefix string
+		expectLen      int
+		expectTrunc    bool
+	}{
+		{
+			name:           "Short name - no truncation",
+			baseName:       "default-my-cluster",
+			expectTrunc:    false,
+			expectLen:      19, // actual length
+			expectedPrefix: "default-my-cluster",
+		},
+		{
+			name:           "Exactly 63 characters - no truncation",
+			baseName:       "namespace-name-cluster-name-that-is-exactly-sixty-three-ch",
+			expectTrunc:    false,
+			expectLen:      59, // actual length
+			expectedPrefix: "namespace-name-cluster-name-that-is-exactly-sixty-three-ch",
+		},
+		{
+			name:        "64 characters - truncated with hash",
+			baseName:    "namespace-name-cluster-name-that-is-exactly-sixty-four-char",
+			expectTrunc: true,
+			expectLen:   63, // max length
+			// Prefix will be truncated and hash appended
+		},
+		{
+			name: "Very long name - truncated with hash",
+			baseName: "extremely-long-namespace-name-that-definitely-exceeds-limits-" +
+				"very-long-cluster-name-that-also-exceeds-kubernetes-dns-label-limit",
+			expectTrunc: true,
+			expectLen:   63,
+		},
+		{
+			name:        "All hyphens at truncation point",
+			baseName:    "namespace-name-cluster-name-with-many-hyphens----------------more",
+			expectTrunc: true,
+			expectLen:   63,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := GenerateDNS1123Name(tc.baseName)
+
+			// Verify length constraint
+			assert.LessOrEqual(t, len(result), 63,
+				"Generated name must not exceed DNS1123 label limit (63 chars)")
+
+			// Verify not empty
+			assert.NotEmpty(t, result, "Generated name should not be empty")
+
+			// Verify DNS1123 compliance
+			errs := validation.IsDNS1123Label(result)
+			assert.Empty(t, errs, "Generated name must be DNS1123 compliant: %v", errs)
+
+			// If truncation expected, verify hash is present
+			if tc.expectTrunc {
+				// Name should be different from original
+				assert.NotEqual(t, tc.baseName, result,
+					"Truncated name should differ from original")
+
+				// Should be exactly 63 characters
+				assert.Len(t, result, 63,
+					"Truncated name should be exactly 63 characters")
+
+				// Should contain a hyphen (separating prefix from hash)
+				assert.Contains(t, result, "-",
+					"Truncated name should contain hyphen separator")
+			} else {
+				// Name should be unchanged
+				assert.Equal(t, tc.baseName, result,
+					"Short names should not be modified")
+			}
+
+			// Test determinism - same input should produce same output
+			result2 := GenerateDNS1123Name(tc.baseName)
+			assert.Equal(t, result, result2,
+				"Function should be deterministic (same input → same output)")
+		})
+	}
+}
+
+func TestGenerateDNS1123NameDeterminism(t *testing.T) {
+	// Same input should always produce same output (deterministic hashing)
+	longName := "very-long-namespace-name-very-long-cluster-name-that-exceeds-the-kubernetes-dns-label-limit"
+
+	result1 := GenerateDNS1123Name(longName)
+	result2 := GenerateDNS1123Name(longName)
+	result3 := GenerateDNS1123Name(longName)
+
+	assert.Equal(t, result1, result2, "Should be deterministic")
+	assert.Equal(t, result2, result3, "Should be deterministic")
+	assert.Len(t, result1, 63, "Should be exactly 63 chars")
+}
+
+func TestGenerateDNS1123NameUniqueness(t *testing.T) {
+	// Different inputs should produce different outputs (hash collision resistance)
+	name1 := "very-long-namespace-name-cluster-1-that-exceeds-the-kubernetes-dns-label-limit"
+	name2 := "very-long-namespace-name-cluster-2-that-exceeds-the-kubernetes-dns-label-limit"
+
+	result1 := GenerateDNS1123Name(name1)
+	result2 := GenerateDNS1123Name(name2)
+
+	assert.NotEqual(t, result1, result2,
+		"Different inputs should produce different names (via different hashes)")
+	assert.Len(t, result1, 63, "Should be 63 chars")
+	assert.Len(t, result2, 63, "Should be 63 chars")
 }
