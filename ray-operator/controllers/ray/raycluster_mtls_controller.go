@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	caSecretName            = "ray-ca-secret"
+	caSecretName            = "ca-secret"
 	caIssuerName            = "ray-ca-issuer"
 	raySelfSignedIssuerName = "ray-selfsigned-issuer"
 	caCertificateName       = "ray-ca-certificate"
@@ -95,6 +95,18 @@ func normalizeIPs(podIPs []string) []string {
 		out = append(out, "127.0.0.1")
 	}
 	return out
+}
+
+// getCASecretName generates the CA secret name with a unique suffix based on cluster UID
+// Format: {cluster_name}-ca-secret-{first_8_chars_of_uid}
+// Using the first 8 characters of the cluster UID guarantees uniqueness per cluster instance
+// This ensures that if a cluster is deleted and recreated with the same name, it gets a new secret
+func getCASecretName(cluster *rayv1.RayCluster) string {
+	// Use first 8 chars of UID for guaranteed uniqueness
+	// Kubernetes UIDs are UUIDs (e.g., "550e8400-e29b-41d4-a716-446655440000")
+	// Taking [:8] gives us the first 8 hex characters before the first hyphen
+	uidSuffix := string(cluster.UID)[:8]
+	return fmt.Sprintf("%s-%s-%s", cluster.Name, caSecretName, uidSuffix)
 }
 
 type RayClusterMTLSController struct {
@@ -277,11 +289,20 @@ func (r *RayClusterMTLSController) cleanupMTLSResources(ctx context.Context, nam
 		errors = append(errors, err)
 	}
 
-	// Clean up CA secret
-	caSecretNameFull := fmt.Sprintf("%s-%s", caSecretName, clusterName)
-	if err := r.deleteSecret(ctx, namespace, caSecretNameFull); err != nil {
-		logger.Error(err, "Failed to delete CA secret", "secret", caSecretNameFull)
-		errors = append(errors, err)
+	// Clean up CA secret using label selector (owner reference on Certificate handles most cleanup)
+	secrets := &corev1.SecretList{}
+	if err := r.List(ctx, secrets, client.InNamespace(namespace),
+		client.MatchingLabels(map[string]string{
+			"ray.openshift.ai/cluster-name": clusterName,
+		})); err == nil {
+		for _, secret := range secrets.Items {
+			if strings.HasPrefix(secret.Name, fmt.Sprintf("%s-%s-", clusterName, caSecretName)) {
+				if err := r.deleteSecret(ctx, namespace, secret.Name); err != nil {
+					logger.Error(err, "Failed to delete CA secret", "secret", secret.Name)
+					errors = append(errors, err)
+				}
+			}
+		}
 	}
 
 	if len(errors) > 0 {
@@ -553,7 +574,7 @@ func (r *RayClusterMTLSController) createCAIssuer(ctx context.Context, instance 
 		Spec: certmanagerv1.IssuerSpec{
 			IssuerConfig: certmanagerv1.IssuerConfig{
 				CA: &certmanagerv1.CAIssuer{
-					SecretName: fmt.Sprintf("%s-%s", caSecretName, instance.Name),
+					SecretName: getCASecretName(instance),
 				},
 			},
 		},
@@ -777,9 +798,14 @@ func (r *RayClusterMTLSController) isCertificateReady(cert *certmanagerv1.Certif
 
 // GetCACertificate retrieves the CA certificate from the specified namespace and cluster
 func (r *RayClusterMTLSController) GetCACertificate(ctx context.Context, namespace, clusterName string) (*corev1.Secret, error) {
-	caSecret := &corev1.Secret{}
+	// Get the RayCluster to retrieve its UID for secret name construction
+	instance := &rayv1.RayCluster{}
+	if err := r.Get(ctx, client.ObjectKey{Name: clusterName, Namespace: namespace}, instance); err != nil {
+		return nil, err
+	}
 
-	secretName := fmt.Sprintf("%s-%s", caSecretName, clusterName)
+	caSecret := &corev1.Secret{}
+	secretName := getCASecretName(instance)
 	err := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: namespace}, caSecret)
 	if err != nil {
 		return nil, err
@@ -812,6 +838,8 @@ func (r *RayClusterMTLSController) SetupWithManager(mgr ctrl.Manager) error {
 func (r *RayClusterMTLSController) createCACertificate(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := log.FromContext(ctx)
 
+	caSecretNameWithSuffix := getCASecretName(instance)
+
 	caCert := &certmanagerv1.Certificate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%s", caCertificateName, instance.Name),
@@ -823,7 +851,7 @@ func (r *RayClusterMTLSController) createCACertificate(ctx context.Context, inst
 			},
 		},
 		Spec: certmanagerv1.CertificateSpec{
-			SecretName: fmt.Sprintf("%s-%s", caSecretName, instance.Name), // Cluster-specific CA secret
+			SecretName: caSecretNameWithSuffix, // Cluster-specific CA secret: {cluster_name}-ca-secret-{hash}
 			IsCA:       true,
 			CommonName: fmt.Sprintf("%s-%s", "ray-root-ca", instance.Name),
 			PrivateKey: &certmanagerv1.CertificatePrivateKey{
@@ -845,6 +873,12 @@ func (r *RayClusterMTLSController) createCACertificate(ctx context.Context, inst
 				Name:  fmt.Sprintf("%s-%s", raySelfSignedIssuerName, instance.Name),
 				Kind:  "Issuer",
 				Group: "cert-manager.io",
+			},
+			// Add label to the generated secret
+			SecretTemplate: &certmanagerv1.CertificateSecretTemplate{
+				Labels: map[string]string{
+					"ray.openshift.ai/cluster-name": instance.Name,
+				},
 			},
 		},
 	}
