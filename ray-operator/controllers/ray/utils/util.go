@@ -350,13 +350,29 @@ func GenerateDNS1123Name(baseName string) string {
 
 	// Name is too long - create a deterministic hash-based name
 	hash := sha256.Sum256([]byte(baseName))
-	suffix := hex.EncodeToString(hash[:])[:10] // Use first 10 chars of hash
-	maxPrefixLen := maxLen - len(suffix) - 1   // -1 for the hyphen
+	suffix := hex.EncodeToString(hash[:])[:10]
+	suffixLen := len(suffix) + 1 // +1 for the hyphen
+	maxPrefixLen := maxLen - suffixLen
 
 	// Truncate the base name to fit
 	prefix := baseName
 	if len(prefix) > maxPrefixLen && maxPrefixLen > 0 {
-		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
+		truncated := prefix[:maxPrefixLen]
+		prefix = strings.TrimRight(truncated, "-")
+
+		// Pad with hash characters if trimming made prefix too short
+		currentTotal := len(prefix) + suffixLen
+		if currentTotal < maxLen {
+			needed := maxLen - currentTotal
+			hashStr := hex.EncodeToString(hash[:])
+			if len(hashStr) > 10 {
+				padding := hashStr[10:]
+				if len(padding) > needed {
+					padding = padding[:needed]
+				}
+				prefix += padding
+			}
+		}
 	}
 
 	// Fallback to generic prefix if truncation resulted in empty string
@@ -364,7 +380,14 @@ func GenerateDNS1123Name(baseName string) string {
 		prefix = "resource"
 	}
 
-	return fmt.Sprintf("%s-%s", prefix, suffix)
+	result := fmt.Sprintf("%s-%s", prefix, suffix)
+
+	// Final safety check: ensure we never exceed maxLen
+	if len(result) > maxLen {
+		result = result[:maxLen]
+	}
+
+	return result
 }
 
 // GenerateIdentifier generates identifier of same group pods

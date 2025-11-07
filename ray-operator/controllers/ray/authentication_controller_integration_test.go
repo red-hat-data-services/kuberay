@@ -388,7 +388,7 @@ func TestFullReconciliationLifecycle(t *testing.T) {
 
 	fakeClient := clientFake.NewClientBuilder().
 		WithScheme(s).
-		WithRuntimeObjects(cluster).
+		WithObjects(cluster).
 		Build()
 
 	mapper := &mockRESTMapper{hasRouteAPI: true}
@@ -412,13 +412,12 @@ func TestFullReconciliationLifecycle(t *testing.T) {
 			},
 		}
 
-		// Execute
+		// First reconciliation: adds finalizer and returns early
 		result, err := controller.Reconcile(ctx, req)
 		require.NoError(t, err, "Should reconcile without error")
 		assert.Equal(t, ctrl.Result{}, result, "Should not requeue")
 
-		// Verify all resources created
-		// 1. Finalizer added
+		// Verify finalizer was added
 		updatedCluster := &rayv1.RayCluster{}
 		err = fakeClient.Get(ctx, types.NamespacedName{
 			Name:      cluster.Name,
@@ -428,10 +427,17 @@ func TestFullReconciliationLifecycle(t *testing.T) {
 		assert.Contains(t, updatedCluster.Finalizers, authenticationFinalizer,
 			"Finalizer should be added")
 
-		// 2. ServiceAccount created
+		// Second reconciliation: creates resources (finalizer is now present)
+		result, err = controller.Reconcile(ctx, req)
+		require.NoError(t, err, "Should reconcile without error")
+		assert.Equal(t, ctrl.Result{}, result, "Should not requeue")
+
+		// Verify all resources created
+		// 1. ServiceAccount created
+		// Use ModeIntegratedOAuth since DetectAuthenticationMode returns ModeIntegratedOAuth for OpenShift
 		sa := &corev1.ServiceAccount{}
 		err = fakeClient.Get(ctx, types.NamespacedName{
-			Name:      namer.ServiceAccountName(utils.ModeOIDC),
+			Name:      namer.ServiceAccountName(utils.ModeIntegratedOAuth),
 			Namespace: cluster.Namespace,
 		}, sa)
 		require.NoError(t, err, "ServiceAccount should be created")
@@ -675,7 +681,7 @@ func TestEnsureServiceAccountGeneric(t *testing.T) {
 		{
 			name:       "OIDC mode - creates OIDC service account",
 			authMode:   utils.ModeOIDC,
-			expectName: "test-cluster-oidc-sa",
+			expectName: "test-cluster-oidc-proxy-sa",
 		},
 		{
 			name:       "OAuth mode - creates OAuth service account",

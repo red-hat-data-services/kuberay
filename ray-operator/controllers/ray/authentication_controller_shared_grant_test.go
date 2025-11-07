@@ -49,7 +49,7 @@ func TestCleanupReferenceGrantWithMixedClusters(t *testing.T) {
 			Name:      "cluster-with-auth",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -69,7 +69,7 @@ func TestCleanupReferenceGrantWithMixedClusters(t *testing.T) {
 			Name:      "cluster-being-deleted",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -162,7 +162,7 @@ func TestCleanupReferenceGrantWithDifferentAuthModes(t *testing.T) {
 			Name:      "cluster-oidc",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -173,7 +173,7 @@ func TestCleanupReferenceGrantWithDifferentAuthModes(t *testing.T) {
 			Name:      "cluster-oauth",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true", // Using same annotation for test
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true", // Using same annotation for test
 			},
 		},
 	}
@@ -184,7 +184,7 @@ func TestCleanupReferenceGrantWithDifferentAuthModes(t *testing.T) {
 			Name:      "cluster-deleted",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -303,7 +303,7 @@ func TestCleanupReferenceGrantOnlyCountsAuthEnabledClusters(t *testing.T) {
 				Name:      "cluster-1",
 				Namespace: "user-namespace",
 				Annotations: map[string]string{
-					"ray.io/enable-oidc": "true",
+					utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 				},
 			},
 		},
@@ -313,7 +313,7 @@ func TestCleanupReferenceGrantOnlyCountsAuthEnabledClusters(t *testing.T) {
 				Name:      "cluster-2",
 				Namespace: "user-namespace",
 				Annotations: map[string]string{
-					"ray.io/enable-oidc": "true",
+					utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 				},
 			},
 		},
@@ -330,7 +330,7 @@ func TestCleanupReferenceGrantOnlyCountsAuthEnabledClusters(t *testing.T) {
 				Name:      "cluster-4",
 				Namespace: "user-namespace",
 				Annotations: map[string]string{
-					"ray.io/enable-oidc": "false",
+					utils.EnableSecureTrustedNetworkAnnotationKey: "false",
 				},
 			},
 		},
@@ -340,7 +340,7 @@ func TestCleanupReferenceGrantOnlyCountsAuthEnabledClusters(t *testing.T) {
 				Name:      "cluster-5-deleted",
 				Namespace: "user-namespace",
 				Annotations: map[string]string{
-					"ray.io/enable-oidc": "true",
+					utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 				},
 			},
 		},
@@ -471,7 +471,7 @@ func TestCleanupReferenceGrantAllClustersWithoutAuth(t *testing.T) {
 			Name:      "cluster-with-auth",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -740,7 +740,7 @@ func TestMultipleNamespacesWithSharedGrants(t *testing.T) {
 			Name:      "cluster-1",
 			Namespace: "namespace-1",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -750,7 +750,7 @@ func TestMultipleNamespacesWithSharedGrants(t *testing.T) {
 			Name:      "cluster-2",
 			Namespace: "namespace-2",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}

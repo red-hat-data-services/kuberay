@@ -226,9 +226,12 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 		if err := r.Update(ctx, rayCluster); err != nil {
 			return fmt.Errorf("failed to add finalizer: %w", err)
 		}
+		// Return early to allow the next reconciliation to create resources
+		// This follows the pattern used in raycluster_controller.go for finalizer handling
+		return nil
 	}
 
-	// Ensure OIDC resources exist
+	// Ensure OIDC resources exist (only after finalizer is present)
 	if err := r.ensureOIDCResources(ctx, rayCluster, authMode, logger); err != nil {
 		return fmt.Errorf("failed to ensure OIDC resources: %w", err)
 	}

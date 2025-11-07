@@ -174,7 +174,7 @@ func TestCleanupReferenceGrantWithMultipleClusters(t *testing.T) {
 			Name:      "cluster-1",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -184,7 +184,7 @@ func TestCleanupReferenceGrantWithMultipleClusters(t *testing.T) {
 			Name:      "cluster-2",
 			Namespace: "user-namespace",
 			Annotations: map[string]string{
-				"ray.io/enable-oidc": "true",
+				utils.EnableSecureTrustedNetworkAnnotationKey: "true",
 			},
 		},
 	}
@@ -224,6 +224,10 @@ func TestCleanupReferenceGrantWithMultipleClusters(t *testing.T) {
 		Namespace: "user-namespace",
 	}, rg)
 	require.NoError(t, err, "ReferenceGrant should still exist (cluster2 remains)")
+
+	// Actually delete cluster1 from the fake client to simulate real deletion
+	err = fakeClient.Delete(ctx, cluster1)
+	require.NoError(t, err, "Should delete cluster1 from fake client")
 
 	// Delete cluster2 - ReferenceGrant should be DELETED (last cluster)
 	err = controller.cleanupReferenceGrant(ctx, cluster2, utils.ModeOIDC, ctrl.Log)

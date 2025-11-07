@@ -1253,7 +1253,7 @@ func TestGenerateDNS1123Name(t *testing.T) {
 		},
 		{
 			name:        "64 characters - truncated with hash",
-			baseName:    "namespace-name-cluster-name-that-is-exactly-sixty-four-char",
+			baseName:    "namespace-name-cluster-name-that-is-exactly-sixty-four-charxxxxx", // 64 chars
 			expectTrunc: true,
 			expectLen:   63, // max length
 			// Prefix will be truncated and hash appended
