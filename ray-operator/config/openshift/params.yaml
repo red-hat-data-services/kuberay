@@ -13,3 +13,5 @@ varReference:
     kind: MutatingWebhookConfiguration
   - path: metadata/annotations/cert-manager.io~1inject-ca-from
     kind: ValidatingWebhookConfiguration
+  - path: spec/template/spec/containers[]/env[]/value
+    kind: Deployment
