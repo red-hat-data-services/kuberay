@@ -282,6 +282,7 @@ rules:
   - gateway.networking.k8s.io
   resources:
   - httproutes
+  - referencegrants
   verbs:
   - create
   - delete

@@ -35,10 +35,9 @@ func setupNetworkPolicyTest(_ *testing.T) {
 	// Initialize NetworkPolicy controller with fake client (no DSCI by default)
 	scheme := runtime.NewScheme()
 	testNetworkPolicyController = &NetworkPolicyController{
-		Scheme: scheme,
-		Client: fake.NewClientBuilder().
-			WithScheme(scheme).
-			Build(),
+		Scheme:     scheme,
+		Client:     fake.NewClientBuilder().WithScheme(scheme).Build(),
+		RESTMapper: &stubRESTMapper{hasRouteAPI: false},
 	}
 
 	// Basic RayCluster without owner
