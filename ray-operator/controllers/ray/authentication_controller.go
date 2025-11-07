@@ -16,6 +16,7 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
@@ -38,6 +40,9 @@ import (
 const (
 	// MediumRequeueDelay for ongoing rollouts
 	MediumRequeueDelay = 10 * time.Second
+
+	// Finalizer for ensuring cleanup of cross-namespace resources (HTTPRoutes)
+	authenticationFinalizer = "ray.io/authentication-resources"
 
 	// OAuth proxy constants
 	oauthProxyContainerName = "oauth-proxy"
@@ -57,20 +62,20 @@ const (
 // resources (ConfigMaps, ServiceAccounts, OpenShift Routes) and manages authentication configurations for Ray clusters on Openshift.
 type AuthenticationController struct {
 	client.Client
-	Recorder record.EventRecorder
-	// configClient configclient.Interface
-	Scheme *runtime.Scheme
-	// routeClient  *routev1client.RouteV1Client
-	options RayClusterReconcilerOptions
+	Recorder   record.EventRecorder
+	Scheme     *runtime.Scheme
+	RESTMapper meta.RESTMapper
+	options    RayClusterReconcilerOptions
 }
 
 // NewAuthenticationController creates a new authentication controller
 func NewAuthenticationController(mgr manager.Manager, options RayClusterReconcilerOptions) *AuthenticationController {
 	return &AuthenticationController{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("authentication-controller"),
-		options:  options,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		RESTMapper: mgr.GetRESTMapper(),
+		Recorder:   mgr.GetEventRecorderFor("authentication-controller"),
+		options:    options,
 	}
 }
 
@@ -92,7 +97,7 @@ func NewAuthenticationController(mgr manager.Manager, options RayClusterReconcil
 // +kubebuilder:rbac:groups=ray.io,resources=rayclusters,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile handles authentication-related resources and manages OAuth sidecar injection
 func (r *AuthenticationController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -103,11 +108,21 @@ func (r *AuthenticationController) Reconcile(ctx context.Context, req ctrl.Reque
 	rayCluster := &rayv1.RayCluster{}
 	if err := r.Get(ctx, req.NamespacedName, rayCluster); err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("RayCluster not found, likely deleted")
+			logger.Info("RayCluster not found, likely deleted - checking for orphaned resources")
+			// Clean up any orphaned ReferenceGrants in this namespace
+			if err := r.cleanupOrphanedReferenceGrant(ctx, req.Namespace, logger); err != nil {
+				logger.Info("Failed to cleanup orphaned ReferenceGrant (non-fatal)", "error", err)
+			}
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get RayCluster")
 		return ctrl.Result{RequeueAfter: MediumRequeueDelay}, err
+	}
+
+	// Handle deletion with finalizer
+	if !rayCluster.DeletionTimestamp.IsZero() {
+		logger.Info("RayCluster is being deleted, running finalizer", "cluster", rayCluster.Name)
+		return r.handleDeletion(ctx, rayCluster, logger)
 	}
 
 	// Skip if managed by external controller
@@ -143,6 +158,34 @@ func (r *AuthenticationController) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{}, nil
 }
 
+// handleDeletion handles cleanup when a RayCluster is being deleted (finalizer pattern)
+func (r *AuthenticationController) handleDeletion(ctx context.Context, cluster *rayv1.RayCluster, logger logr.Logger) (ctrl.Result, error) {
+	// Check if our finalizer is present
+	if !controllerutil.ContainsFinalizer(cluster, authenticationFinalizer) {
+		logger.Info("Finalizer not present, skipping authentication cleanup")
+		return ctrl.Result{}, nil
+	}
+
+	logger.Info("Running authentication resource cleanup (finalizer)", "cluster", cluster.Name)
+
+	// Detect auth mode and run cleanup
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	if err := r.cleanupOIDCResources(ctx, cluster, authMode, logger); err != nil {
+		logger.Error(err, "Failed to cleanup authentication resources")
+		return ctrl.Result{RequeueAfter: MediumRequeueDelay}, err
+	}
+
+	// Remove the finalizer
+	controllerutil.RemoveFinalizer(cluster, authenticationFinalizer)
+	if err := r.Update(ctx, cluster); err != nil {
+		logger.Error(err, "Failed to remove finalizer")
+		return ctrl.Result{RequeueAfter: MediumRequeueDelay}, err
+	}
+
+	logger.Info("Authentication cleanup complete, finalizer removed", "cluster", cluster.Name)
+	return ctrl.Result{}, nil
+}
+
 // handleOIDCConfiguration configures OIDC for RayClusters (supports both OIDC and OAuth modes)
 func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, req ctrl.Request, authMode utils.AuthenticationMode, logger logr.Logger) error {
 	// Try to get RayCluster
@@ -156,7 +199,19 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 	shouldEnable := utils.ShouldEnableOIDC(rayCluster, authMode) || utils.ShouldEnableOAuth(rayCluster, authMode)
 	if !shouldEnable {
 		logger.Info("Authentication not requested for this cluster", "cluster", rayCluster.Name, "mode", authMode)
-		return r.cleanupOIDCResources(ctx, rayCluster, authMode, logger)
+
+		// Remove finalizer if present (auth is disabled)
+		if controllerutil.ContainsFinalizer(rayCluster, authenticationFinalizer) {
+			logger.Info("Removing authentication finalizer (auth disabled)", "cluster", rayCluster.Name)
+			if err := r.cleanupOIDCResources(ctx, rayCluster, authMode, logger); err != nil {
+				return err
+			}
+			controllerutil.RemoveFinalizer(rayCluster, authenticationFinalizer)
+			if err := r.Update(ctx, rayCluster); err != nil {
+				return fmt.Errorf("failed to remove finalizer: %w", err)
+			}
+		}
+		return nil
 	}
 
 	// Ensure ingress is enabled for httproute creation
@@ -164,7 +219,19 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 		return fmt.Errorf("failed to ensure ingress enabled: %w", err)
 	}
 
-	// Ensure OIDC resources exist
+	// Add finalizer to ensure cleanup happens before cluster deletion
+	if !controllerutil.ContainsFinalizer(rayCluster, authenticationFinalizer) {
+		logger.Info("Adding authentication finalizer to RayCluster", "cluster", rayCluster.Name)
+		controllerutil.AddFinalizer(rayCluster, authenticationFinalizer)
+		if err := r.Update(ctx, rayCluster); err != nil {
+			return fmt.Errorf("failed to add finalizer: %w", err)
+		}
+		// Return early to allow the next reconciliation to create resources
+		// This follows the pattern used in raycluster_controller.go for finalizer handling
+		return nil
+	}
+
+	// Ensure OIDC resources exist (only after finalizer is present)
 	if err := r.ensureOIDCResources(ctx, rayCluster, authMode, logger); err != nil {
 		return fmt.Errorf("failed to ensure OIDC resources: %w", err)
 	}
@@ -204,9 +271,22 @@ func (r *AuthenticationController) ensureOIDCResources(ctx context.Context, clus
 		return fmt.Errorf("failed to ensure service account: %w", err)
 	}
 
-	// Create HttpRoute
+	// Create ReferenceGrant BEFORE HTTPRoute to enable cross-namespace service references
+	if err := r.ensureReferenceGrant(ctx, cluster, logger); err != nil {
+		return fmt.Errorf("failed to ensure ReferenceGrant: %w", err)
+	}
+
+	// Create HttpRoute (in platform namespace)
 	if err := r.ensureHttpRoute(ctx, cluster, logger); err != nil {
 		return fmt.Errorf("failed to ensure HttpRoute: %w", err)
+	}
+
+	// MIGRATION: Clean up old HTTPRoute from cluster namespace if it exists
+	// This handles migration from the old implementation where HTTPRoutes were created in the cluster namespace
+	// We do this AFTER creating the new HTTPRoute to ensure no downtime
+	if err := r.cleanupOldHTTPRouteFromClusterNamespace(ctx, cluster, logger); err != nil {
+		logger.Info("Failed to cleanup old HTTPRoute (non-fatal)", "error", err)
+		// Don't fail reconciliation if old cleanup fails - it's a migration step
 	}
 
 	// Create ConfigMap
@@ -219,7 +299,52 @@ func (r *AuthenticationController) ensureOIDCResources(ctx context.Context, clus
 
 func (r *AuthenticationController) cleanupOIDCResources(ctx context.Context, cluster *rayv1.RayCluster, authMode utils.AuthenticationMode, logger logr.Logger) error {
 	namer := utils.NewResourceNamer(cluster)
+	platformNamespace, _ := utils.GetPlatformNamespace(r.RESTMapper)
 
+	// STEP 1: Remove cross-namespace access FIRST (security-first approach)
+	// Delete ReferenceGrant if this is the last cluster with auth in the namespace
+	// This revokes cross-namespace trust before cleaning up other resources
+	if err := r.cleanupReferenceGrant(ctx, cluster, authMode, logger); err != nil {
+		logger.Info("Failed to cleanup ReferenceGrant", "error", err)
+	}
+
+	// STEP 2: Remove HTTPRoutes (both new and old locations)
+	// Remove HTTPRoute from platform namespace (using label selector)
+	httpRouteList := &gatewayv1.HTTPRouteList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(platformNamespace),
+		client.MatchingLabels{
+			"ray.io/cluster-namespace": cluster.Namespace,
+			"ray.io/cluster-name":      cluster.Name,
+		},
+	}
+
+	if err := r.List(ctx, httpRouteList, listOpts...); err == nil {
+		for i := range httpRouteList.Items {
+			httpRoute := &httpRouteList.Items[i]
+			if err := r.Delete(ctx, httpRoute); err != nil {
+				logger.Info("Failed to delete HTTPRoute", "error", err, "name", httpRoute.Name)
+			} else {
+				logger.Info("Deleted HTTPRoute", "name", httpRoute.Name, "namespace", platformNamespace)
+			}
+		}
+	} else {
+		logger.Info("Failed to list HTTPRoutes for cleanup", "error", err)
+	}
+
+	// MIGRATION: Also remove old HTTPRoute from cluster namespace (if it exists from previous implementation)
+	// Old implementation created HTTPRoute with name matching cluster name in the cluster's own namespace
+	oldHttpRoute := &gatewayv1.HTTPRoute{}
+	oldHttpRouteName := cluster.Name // Old naming convention
+	if err := r.Get(ctx, client.ObjectKey{Name: oldHttpRouteName, Namespace: cluster.Namespace}, oldHttpRoute); err == nil {
+		if err := r.Delete(ctx, oldHttpRoute); err != nil {
+			logger.Info("Failed to delete old HTTPRoute from cluster namespace", "error", err, "name", oldHttpRouteName)
+		} else {
+			logger.Info("Deleted old HTTPRoute from cluster namespace (migration)", "name", oldHttpRouteName, "namespace", cluster.Namespace)
+		}
+	}
+
+	// STEP 3: Remove namespace-scoped resources
 	// Remove ConfigMap
 	configMap := &corev1.ConfigMap{}
 	configMapName := namer.ConfigMapName()
@@ -228,17 +353,6 @@ func (r *AuthenticationController) cleanupOIDCResources(ctx context.Context, clu
 			logger.Info("Failed to delete ConfigMap", "error", err)
 		} else {
 			logger.Info("Deleted ConfigMap", "configMap", configMapName)
-		}
-	}
-
-	// Remove HTTPRoute
-	httpRoute := &gatewayv1.HTTPRoute{}
-	httpRouteName := cluster.Name
-	if err := r.Get(ctx, client.ObjectKey{Name: httpRouteName, Namespace: cluster.Namespace}, httpRoute); err == nil {
-		if err := r.Delete(ctx, httpRoute); err != nil {
-			logger.Info("Failed to delete HTTPRoute", "error", err)
-		} else {
-			logger.Info("Deleted HTTPRoute", "httpRoute", httpRouteName)
 		}
 	}
 
@@ -262,26 +376,46 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 		return err
 	}
 
+	// Get platform namespace where HTTPRoute should be created
+	platformNamespace, _ := utils.GetPlatformNamespace(r.RESTMapper)
+	gatewayNamespace := utils.GetGatewayNamespace()
+	gatewayName := utils.GetGatewayName()
+
+	// HTTPRoute name includes namespace to avoid conflicts in platform namespace
+	// Must be a valid DNS label (max 63 characters) - use utility function for truncation
+	baseRouteName := fmt.Sprintf("%s-%s", cluster.Namespace, cluster.Name)
+	httpRouteName := utils.GenerateDNS1123Name(baseRouteName)
+
 	httpRoute := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cluster.Name,
-			Namespace: cluster.Namespace,
+			Name:      httpRouteName,
+			Namespace: platformNamespace, // Create in platform namespace, not cluster namespace
+			Labels: map[string]string{
+				"ray.io/cluster-namespace": cluster.Namespace,
+				"ray.io/cluster-name":      cluster.Name,
+				utils.RayClusterLabelKey:   cluster.Name,
+			},
 		},
 	}
 
 	opResult, err := controllerutil.CreateOrUpdate(ctx, r.Client, httpRoute, func() error {
-		// Set controller reference
-		if err := controllerutil.SetControllerReference(cluster, httpRoute, r.Scheme); err != nil {
-			return err
+		// NOTE: Cannot use SetControllerReference for cross-namespace ownership
+		// Instead, we use labels and finalizers for cleanup
+		// Add owner references in the same namespace if possible
+		if platformNamespace == cluster.Namespace {
+			if err := controllerutil.SetControllerReference(cluster, httpRoute, r.Scheme); err != nil {
+				return err
+			}
 		}
 
 		// Helper variables for pointer fields
 		group := gatewayv1.Group("gateway.networking.k8s.io")
 		kind := gatewayv1.Kind("Gateway")
-		gatewayName := gatewayv1.ObjectName("data-science-gateway")
-		namespace := gatewayv1.Namespace("openshift-ingress")
+		gatewayNameObj := gatewayv1.ObjectName(gatewayName)
+		gatewayNamespaceObj := gatewayv1.Namespace(gatewayNamespace)
 		serviceGroup := gatewayv1.Group("")
 		serviceKind := gatewayv1.Kind("Service")
+		serviceNamespace := gatewayv1.Namespace(cluster.Namespace) // Cross-namespace reference
 		weight := int32(1)
 		pathExact := gatewayv1.PathMatchExact
 		pathPrefix := gatewayv1.PathMatchPathPrefix
@@ -296,8 +430,8 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 					{
 						Group:     &group,
 						Kind:      &kind,
-						Name:      gatewayName,
-						Namespace: &namespace,
+						Name:      gatewayNameObj,
+						Namespace: &gatewayNamespaceObj,
 					},
 				},
 			},
@@ -341,10 +475,11 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 						{
 							BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Group: &serviceGroup,
-									Kind:  &serviceKind,
-									Name:  gatewayv1.ObjectName(serviceName),
-									Port:  &port,
+									Group:     &serviceGroup,
+									Kind:      &serviceKind,
+									Name:      gatewayv1.ObjectName(serviceName),
+									Namespace: &serviceNamespace, // Cross-namespace reference enabled by ReferenceGrant
+									Port:      &port,
 								},
 								Weight: &weight,
 							},
@@ -373,6 +508,198 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 
 	if opResult != controllerutil.OperationResultNone {
 		logger.Info("HTTPRoute reconciled", "name", httpRoute.Name, "operation", opResult)
+	}
+
+	return nil
+}
+
+// cleanupOldHTTPRouteFromClusterNamespace removes HTTPRoutes that were created in the cluster namespace
+// by the old implementation. This is a migration helper that runs during reconciliation.
+func (r *AuthenticationController) cleanupOldHTTPRouteFromClusterNamespace(ctx context.Context, cluster *rayv1.RayCluster, logger logr.Logger) error {
+	// Old implementation created HTTPRoute with name matching cluster name in the cluster's own namespace
+	oldHttpRoute := &gatewayv1.HTTPRoute{}
+	oldHttpRouteName := cluster.Name // Old naming convention
+
+	err := r.Get(ctx, client.ObjectKey{Name: oldHttpRouteName, Namespace: cluster.Namespace}, oldHttpRoute)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// No old HTTPRoute to clean up - this is the normal case
+			logger.V(1).Info("No old HTTPRoute found in cluster namespace (already migrated or never existed)",
+				"name", oldHttpRouteName,
+				"namespace", cluster.Namespace)
+			return nil
+		}
+		return fmt.Errorf("failed to get old HTTPRoute: %w", err)
+	}
+
+	// Old HTTPRoute exists - delete it
+	logger.Info("Found old HTTPRoute in cluster namespace, deleting for migration",
+		"name", oldHttpRouteName,
+		"namespace", cluster.Namespace,
+		"hasOwnerRef", len(oldHttpRoute.OwnerReferences) > 0)
+
+	// Remove owner references if present (they might block deletion)
+	if len(oldHttpRoute.OwnerReferences) > 0 {
+		oldHttpRoute.OwnerReferences = nil
+		if err := r.Update(ctx, oldHttpRoute); err != nil {
+			logger.Info("Failed to remove owner references from old HTTPRoute", "error", err)
+			// Continue anyway - try to delete
+		}
+	}
+
+	if err := r.Delete(ctx, oldHttpRoute); err != nil {
+		if errors.IsNotFound(err) {
+			// Already deleted (race condition) - that's fine
+			return nil
+		}
+		return fmt.Errorf("failed to delete old HTTPRoute: %w", err)
+	}
+
+	logger.Info("Deleted old HTTPRoute from cluster namespace (migration complete)",
+		"name", oldHttpRouteName,
+		"namespace", cluster.Namespace)
+	r.Recorder.Event(cluster, "Normal", "HTTPRouteMigrated",
+		fmt.Sprintf("Migrated HTTPRoute from %s to platform namespace", cluster.Namespace))
+
+	return nil
+}
+
+// ensureReferenceGrant creates or updates a shared ReferenceGrant in the cluster's namespace.
+//
+// Design Decision: One Shared ReferenceGrant Per Namespace
+// This creates a single ReferenceGrant per namespace, shared by all RayClusters in that namespace.
+// The grant is only deleted when the last RayCluster with authentication is removed from the namespace.
+//
+// Why this approach:
+//   - Semantically correct: Trust relationship is between namespaces, not individual clusters
+//   - No resource redundancy: One grant regardless of cluster count
+//   - Cleaner resource model: Single grant represents namespace-level permission
+//   - Better UX: Users see one clear grant per namespace
+//   - Minimal API churn: Grant created once per namespace, not per cluster
+//
+// Implementation notes:
+//   - Uses consistent name: "kuberay-gateway-access"
+//   - No owner reference (shared across clusters)
+//   - Cleanup uses reference counting (see cleanupReferenceGrant)
+//   - Idempotent: Multiple clusters can safely call ensureReferenceGrant
+func (r *AuthenticationController) ensureReferenceGrant(ctx context.Context, cluster *rayv1.RayCluster, logger logr.Logger) error {
+	platformNamespace, _ := utils.GetPlatformNamespace(r.RESTMapper)
+
+	// Use a consistent name for the shared grant in this namespace
+	grantName := "kuberay-gateway-access"
+
+	referenceGrant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      grantName,
+			Namespace: cluster.Namespace, // Grant lives in the target namespace (where Services are)
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kuberay-operator",
+				"app.kubernetes.io/component":  "gateway-access",
+			},
+		},
+	}
+
+	opResult, err := controllerutil.CreateOrUpdate(ctx, r.Client, referenceGrant, func() error {
+		// NOTE: Do NOT set controller reference - this grant is shared across multiple clusters
+		// Cleanup is handled by reference counting in cleanupReferenceGrant()
+
+		// Configure ReferenceGrant to allow HTTPRoutes from platform namespace to reference Services in this namespace
+		referenceGrant.Spec = gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{
+					Group:     gatewayv1.GroupName,
+					Kind:      "HTTPRoute",
+					Namespace: gatewayv1.Namespace(platformNamespace),
+				},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{
+					Group: "", // Core API group for Services
+					Kind:  "Service",
+					// Name is optional - if omitted, allows all Services in this namespace
+					// We leave it unset to allow any RayCluster service in the namespace
+				},
+			},
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or update ReferenceGrant: %w", err)
+	}
+
+	if opResult != controllerutil.OperationResultNone {
+		logger.Info("ReferenceGrant reconciled (shared)", "name", referenceGrant.Name, "namespace", cluster.Namespace, "operation", opResult)
+	}
+
+	return nil
+}
+
+// countClustersWithAuth counts RayClusters with authentication enabled in the namespace.
+// If excludeCluster is provided, it will be excluded from the count.
+func (r *AuthenticationController) countClustersWithAuth(ctx context.Context, namespace string, authMode utils.AuthenticationMode, excludeCluster *rayv1.RayCluster) (int, error) {
+	clusterList := &rayv1.RayClusterList{}
+	if err := r.List(ctx, clusterList, client.InNamespace(namespace)); err != nil {
+		return 0, fmt.Errorf("failed to list RayClusters: %w", err)
+	}
+
+	count := 0
+	for i := range clusterList.Items {
+		c := &clusterList.Items[i]
+		// Skip the excluded cluster if provided
+		if excludeCluster != nil && c.Name == excludeCluster.Name {
+			continue
+		}
+		// Check if this cluster has authentication enabled
+		if utils.ShouldEnableOIDC(c, authMode) || utils.ShouldEnableOAuth(c, authMode) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// cleanupReferenceGrant removes the shared ReferenceGrant only if this is the last RayCluster
+// with authentication in the namespace.
+func (r *AuthenticationController) cleanupReferenceGrant(ctx context.Context, cluster *rayv1.RayCluster, authMode utils.AuthenticationMode, logger logr.Logger) error {
+	grantName := "kuberay-gateway-access"
+
+	// Count how many other RayClusters with authentication exist in this namespace
+	authClustersCount, err := r.countClustersWithAuth(ctx, cluster.Namespace, authMode, cluster)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("ReferenceGrant cleanup check",
+		"namespace", cluster.Namespace,
+		"otherAuthClusters", authClustersCount,
+		"action", func() string {
+			if authClustersCount == 0 {
+				return "will delete"
+			}
+			return "will retain"
+		}())
+
+	// Only delete the ReferenceGrant if this is the last cluster with auth
+	if authClustersCount == 0 {
+		grant := &gatewayv1beta1.ReferenceGrant{}
+		err := r.Get(ctx, client.ObjectKey{Name: grantName, Namespace: cluster.Namespace}, grant)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("ReferenceGrant already deleted", "name", grantName)
+				return nil
+			}
+			return fmt.Errorf("failed to get ReferenceGrant: %w", err)
+		}
+
+		if err := r.Delete(ctx, grant); err != nil {
+			return fmt.Errorf("failed to delete ReferenceGrant: %w", err)
+		}
+		logger.Info("Deleted shared ReferenceGrant (last cluster with auth)", "name", grantName, "namespace", cluster.Namespace)
+	} else {
+		logger.Info("ReferenceGrant retained (other clusters with auth exist)",
+			"name", grantName,
+			"namespace", cluster.Namespace,
+			"remainingClusters", authClustersCount)
 	}
 
 	return nil
@@ -643,6 +970,50 @@ func GetOIDCProxyVolumes(cluster *rayv1.RayCluster) []corev1.Volume {
 	return []corev1.Volume{
 		utils.CreateConfigMapVolume(configMapName, configMapName),
 	}
+}
+
+// cleanupOrphanedReferenceGrant checks if there are any RayClusters with auth in the namespace
+// and removes the ReferenceGrant if none exist. This handles cases where the controller is
+// triggered after a cluster is deleted.
+func (r *AuthenticationController) cleanupOrphanedReferenceGrant(ctx context.Context, namespace string, logger logr.Logger) error {
+	grantName := "kuberay-gateway-access"
+
+	// Count clusters with authentication enabled in the namespace
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	authClustersCount, err := r.countClustersWithAuth(ctx, namespace, authMode, nil)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("Checking for orphaned ReferenceGrant",
+		"namespace", namespace,
+		"authClusters", authClustersCount)
+
+	// If no clusters with auth exist, delete the grant
+	if authClustersCount == 0 {
+		grant := &gatewayv1beta1.ReferenceGrant{}
+		err := r.Get(ctx, client.ObjectKey{Name: grantName, Namespace: namespace}, grant)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("No orphaned ReferenceGrant found", "namespace", namespace)
+				return nil
+			}
+			return fmt.Errorf("failed to get ReferenceGrant: %w", err)
+		}
+
+		if err := r.Delete(ctx, grant); err != nil {
+			return fmt.Errorf("failed to delete orphaned ReferenceGrant: %w", err)
+		}
+		logger.Info("Deleted orphaned ReferenceGrant (no clusters with auth remain)",
+			"name", grantName,
+			"namespace", namespace)
+	} else {
+		logger.Info("ReferenceGrant not orphaned (clusters with auth exist)",
+			"namespace", namespace,
+			"authClusters", authClustersCount)
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager

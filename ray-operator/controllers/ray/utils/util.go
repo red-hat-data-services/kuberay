@@ -3,7 +3,9 @@ package utils
 import (
 	"context"
 	"crypto/sha1" //nolint:gosec // We are not using this for security purposes
+	"crypto/sha256"
 	"encoding/base32"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -18,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -324,6 +327,67 @@ func GenerateRayClusterName(serviceName string) string {
 // GenerateRayJobId generates a ray job id for submission
 func GenerateRayJobId(rayjob string) string {
 	return fmt.Sprintf("%s-%s", rayjob, rand.String(5))
+}
+
+// GenerateDNS1123Name generates a Kubernetes DNS1123-compliant name (max 63 characters).
+// If the input name exceeds the limit, it truncates and adds a deterministic hash suffix
+// to ensure uniqueness while maintaining DNS compliance.
+//
+// This is useful for resource names that combine multiple identifiers (e.g., namespace + cluster name)
+// that might exceed Kubernetes' DNS label limit.
+//
+// Example:
+//   - Short name: "default-my-cluster" → "default-my-cluster" (unchanged)
+//   - Long name: "very-long-namespace-very-long-cluster-name-that-exceeds-limit"
+//     → "very-long-cluster-name-that-exceed-a1b2c3d4e5" (truncated + hash)
+func GenerateDNS1123Name(baseName string) string {
+	const maxLen = validation.DNS1123LabelMaxLength // 63 characters
+
+	// If name fits, return as-is
+	if len(baseName) <= maxLen {
+		return baseName
+	}
+
+	// Name is too long - create a deterministic hash-based name
+	hash := sha256.Sum256([]byte(baseName))
+	suffix := hex.EncodeToString(hash[:])[:10]
+	suffixLen := len(suffix) + 1 // +1 for the hyphen
+	maxPrefixLen := maxLen - suffixLen
+
+	// Truncate the base name to fit
+	prefix := baseName
+	if len(prefix) > maxPrefixLen && maxPrefixLen > 0 {
+		truncated := prefix[:maxPrefixLen]
+		prefix = strings.TrimRight(truncated, "-")
+
+		// Pad with hash characters if trimming made prefix too short
+		currentTotal := len(prefix) + suffixLen
+		if currentTotal < maxLen {
+			needed := maxLen - currentTotal
+			hashStr := hex.EncodeToString(hash[:])
+			if len(hashStr) > 10 {
+				padding := hashStr[10:]
+				if len(padding) > needed {
+					padding = padding[:needed]
+				}
+				prefix += padding
+			}
+		}
+	}
+
+	// Fallback to generic prefix if truncation resulted in empty string
+	if prefix == "" {
+		prefix = "resource"
+	}
+
+	result := fmt.Sprintf("%s-%s", prefix, suffix)
+
+	// Final safety check: ensure we never exceed maxLen
+	if len(result) > maxLen {
+		result = result[:maxLen]
+	}
+
+	return result
 }
 
 // GenerateIdentifier generates identifier of same group pods
