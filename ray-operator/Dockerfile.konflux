@@ -33,11 +33,12 @@ USER 65532:65532
 
 ENTRYPOINT ["/manager"]
 LABEL com.redhat.component="odh-kuberay-operator-controller-container" \
-      name="managed-open-data-hub/odh-kuberay-operator-controller-container-rhel8" \
+      name="rhoai/odh-kuberay-operator-controller-rhel9" \
       description="Manages lifecycle of RayClusters, RayJobs, RayServices and associated Kubernetes resources" \
       summary="odh-kuberay-operator-controller-container" \
       maintainer="['managed-open-data-hub@redhat.com']" \
       io.openshift.expose-services="" \
       io.k8s.display-name="odh-kuberay-operator-controller-container" \
       io.k8s.description="odh-kuberay-operator-controller" \
-      com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf"
+      com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf" \
+      cpe="cpe:/a:redhat:openshift_ai:2.22::el9"
