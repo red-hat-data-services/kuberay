@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -2776,6 +2777,8 @@ func Test_RedisCleanupFeatureFlag(t *testing.T) {
 	newScheme := runtime.NewScheme()
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
+	_ = networkingv1.AddToScheme(newScheme)
+	_ = routev1.Install(newScheme)
 
 	// Prepare a RayCluster with the GCS FT enabled and Autoscaling disabled.
 	gcsFTEnabledCluster := testRayCluster.DeepCopy()
@@ -2885,6 +2888,8 @@ func TestEvents_RedisCleanup(t *testing.T) {
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
 	_ = batchv1.AddToScheme(newScheme)
+	_ = networkingv1.AddToScheme(newScheme)
+	_ = routev1.Install(newScheme)
 
 	// Prepare a RayCluster with the GCS FT enabled and Autoscaling disabled.
 	gcsFTEnabledCluster := testRayCluster.DeepCopy()
@@ -2974,6 +2979,8 @@ func Test_RedisCleanup(t *testing.T) {
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
 	_ = batchv1.AddToScheme(newScheme)
+	_ = networkingv1.AddToScheme(newScheme)
+	_ = routev1.Install(newScheme)
 
 	// Prepare a RayCluster with the GCS FT enabled and Autoscaling disabled.
 	gcsFTEnabledCluster := testRayCluster.DeepCopy()
