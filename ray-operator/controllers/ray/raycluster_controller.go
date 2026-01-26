@@ -421,8 +421,11 @@ func (r *RayClusterReconciler) inconsistentRayClusterStatus(ctx context.Context,
 func (r *RayClusterReconciler) reconcileIngress(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
 	logger.Info("Reconciling Ingress")
+
 	if instance.Spec.HeadGroupSpec.EnableIngress == nil || !*instance.Spec.HeadGroupSpec.EnableIngress {
-		return nil
+		// Clean up any existing Routes/Ingresses when enableIngress is false
+		logger.Info("EnableIngress is false, cleaning up any existing Routes/Ingresses")
+		return r.cleanupIngress(ctx, instance)
 	}
 
 	if r.options.IsOpenShift {
@@ -489,6 +492,77 @@ func (r *RayClusterReconciler) reconcileIngressKubernetes(ctx context.Context, i
 
 		if err := r.createHeadIngress(ctx, ingress, instance); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// cleanupIngress removes any existing Routes (OpenShift) or Ingresses (Kubernetes) for the RayCluster
+// This is called when enableIngress is set to false to ensure no direct access paths exist
+func (r *RayClusterReconciler) cleanupIngress(ctx context.Context, instance *rayv1.RayCluster) error {
+	logger := ctrl.LoggerFrom(ctx)
+
+	if r.options.IsOpenShift {
+		// Clean up OpenShift Routes
+		return r.cleanupRoutes(ctx, instance, logger)
+	}
+	// Clean up Kubernetes Ingresses
+	return r.cleanupIngresses(ctx, instance, logger)
+}
+
+// cleanupRoutes removes any existing OpenShift Routes for the RayCluster
+func (r *RayClusterReconciler) cleanupRoutes(ctx context.Context, instance *rayv1.RayCluster, logger logr.Logger) error {
+	headRoutes := routev1.RouteList{}
+	filterLabels := common.RayClusterNetworkResourcesOptions(instance).ToListOptions()
+
+	if err := r.List(ctx, &headRoutes, filterLabels...); err != nil {
+		return err
+	}
+
+	for _, route := range headRoutes.Items {
+		logger.Info("Deleting Route because enableIngress is false",
+			"route", route.Name, "namespace", route.Namespace)
+		if err := r.Delete(ctx, &route); err != nil {
+			if !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete Route", "route", route.Name)
+				return err
+			}
+			// Route already deleted (IsNotFound) - skip event
+			logger.V(1).Info("Route already deleted", "route", route.Name)
+		} else {
+			// Successfully deleted - emit event
+			r.Recorder.Eventf(instance, corev1.EventTypeNormal,
+				"RouteDeleted", "Deleted Route %s (enableIngress is false)", route.Name)
+		}
+	}
+
+	return nil
+}
+
+// cleanupIngresses removes any existing Kubernetes Ingresses for the RayCluster
+func (r *RayClusterReconciler) cleanupIngresses(ctx context.Context, instance *rayv1.RayCluster, logger logr.Logger) error {
+	headIngresses := networkingv1.IngressList{}
+	filterLabels := common.RayClusterNetworkResourcesOptions(instance).ToListOptions()
+
+	if err := r.List(ctx, &headIngresses, filterLabels...); err != nil {
+		return err
+	}
+
+	for _, ingress := range headIngresses.Items {
+		logger.Info("Deleting Ingress because enableIngress is false",
+			"ingress", ingress.Name, "namespace", ingress.Namespace)
+		if err := r.Delete(ctx, &ingress); err != nil {
+			if !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete Ingress", "ingress", ingress.Name)
+				return err
+			}
+			// Ingress already deleted (IsNotFound) - skip event
+			logger.V(1).Info("Ingress already deleted", "ingress", ingress.Name)
+		} else {
+			// Successfully deleted - emit event
+			r.Recorder.Eventf(instance, corev1.EventTypeNormal,
+				"IngressDeleted", "Deleted Ingress %s (enableIngress is false)", ingress.Name)
 		}
 	}
 
