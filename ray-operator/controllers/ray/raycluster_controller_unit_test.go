@@ -33,6 +33,7 @@ import (
 	"go.uber.org/mock/gomock"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -3630,6 +3631,8 @@ func Test_ReconcileManagedBy(t *testing.T) {
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
 	_ = batchv1.AddToScheme(newScheme)
+	_ = networkingv1.AddToScheme(newScheme)
+	_ = routev1.Install(newScheme)
 
 	tests := []struct {
 		managedBy       *string
