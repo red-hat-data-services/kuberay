@@ -214,9 +214,14 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 		return nil
 	}
 
-	// Ensure ingress is enabled for httproute creation
-	if err := r.ensureIngressEnabled(ctx, rayCluster, logger); err != nil {
-		return fmt.Errorf("failed to ensure ingress enabled: %w", err)
+	// On OpenShift, enforce enableIngress: false for Gateway-only access
+	// This handles both new clusters (webhook sets it) and existing clusters (upgrade scenario)
+	// HTTPRoute creation is independent of enableIngress
+	// enableIngress controls basic Route/Ingress creation (which may be disabled by webhooks in ODH)
+	if r.options.IsOpenShift {
+		if err := r.enforceEnableIngressFalseOnOpenShift(ctx, rayCluster, logger); err != nil {
+			return err
+		}
 	}
 
 	// Add finalizer to ensure cleanup happens before cluster deletion
@@ -238,31 +243,6 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 
 	eventMsg := fmt.Sprintf("Authentication configured for RayCluster (mode: %s)", authMode)
 	r.Recorder.Event(rayCluster, "Normal", "AuthenticationConfigured", eventMsg)
-	return nil
-}
-
-// ensureIngressEnabled ensures that ingress is enabled for the RayCluster
-func (r *AuthenticationController) ensureIngressEnabled(ctx context.Context, cluster *rayv1.RayCluster, logger logr.Logger) error {
-	// Check if ingress is already enabled
-	if cluster.Spec.HeadGroupSpec.EnableIngress != nil && *cluster.Spec.HeadGroupSpec.EnableIngress {
-		logger.Info("Ingress already enabled for cluster", "cluster", cluster.Name)
-		return nil
-	}
-
-	logger.Info("Enabling ingress for Auth-secured cluster", "cluster", cluster.Name)
-
-	// Create a copy and enable ingress
-	updatedCluster := cluster.DeepCopy()
-	trueValue := true
-	updatedCluster.Spec.HeadGroupSpec.EnableIngress = &trueValue
-
-	// Update the cluster
-	if err := r.Update(ctx, updatedCluster); err != nil {
-		return fmt.Errorf("failed to enable ingress: %w", err)
-	}
-
-	logger.Info("Successfully enabled ingress for cluster", "cluster", cluster.Name)
-	r.Recorder.Event(cluster, "Normal", "IngressEnabled", "Automatically enabled ingress for Auth configuration")
 	return nil
 }
 
@@ -1011,6 +991,46 @@ func (r *AuthenticationController) cleanupOrphanedReferenceGrant(ctx context.Con
 		logger.Info("ReferenceGrant not orphaned (clusters with auth exist)",
 			"namespace", namespace,
 			"authClusters", authClustersCount)
+	}
+
+	return nil
+}
+
+// enforceEnableIngressFalseOnOpenShift ensures enableIngress is set to false on OpenShift
+// This provides upgrade idempotency - handles existing clusters that weren't processed by webhook
+// The webhook sets this for new/edited clusters, this handles clusters from before the webhook was updated
+// Placed in Authentication controller because HTTPRoute requires Gateway access (not basic Routes)
+func (r *AuthenticationController) enforceEnableIngressFalseOnOpenShift(ctx context.Context, rayCluster *rayv1.RayCluster, logger logr.Logger) error {
+	// Check if enableIngress is already false
+	if rayCluster.Spec.HeadGroupSpec.EnableIngress != nil && !*rayCluster.Spec.HeadGroupSpec.EnableIngress {
+		return nil // Already false, nothing to do
+	}
+
+	// Need to set to false
+	wasTrue := rayCluster.Spec.HeadGroupSpec.EnableIngress != nil && *rayCluster.Spec.HeadGroupSpec.EnableIngress
+	wasMissing := rayCluster.Spec.HeadGroupSpec.EnableIngress == nil
+
+	logger.Info("Enforcing enableIngress to false on OpenShift (Gateway-only access)",
+		"cluster", rayCluster.Name, "previousValue", rayCluster.Spec.HeadGroupSpec.EnableIngress)
+
+	// Update the cluster spec
+	rayCluster.Spec.HeadGroupSpec.EnableIngress = ptr.To(false)
+	if err := r.Update(ctx, rayCluster); err != nil {
+		logger.Error(err, "Failed to enforce enableIngress to false", "cluster", rayCluster.Name)
+		return err
+	}
+
+	if wasTrue {
+		logger.Info("Overrode user-specified enableIngress from true to false for Gateway-only access",
+			"cluster", rayCluster.Name)
+		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
+			"EnableIngressEnforced",
+			"Set enableIngress to false to enforce Gateway-only access (overrode user value)")
+	} else if wasMissing {
+		logger.Info("Set enableIngress to false for Gateway-only access (was not set)", "cluster", rayCluster.Name)
+		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
+			"EnableIngressSet",
+			"Set enableIngress to false for Gateway-only access")
 	}
 
 	return nil
