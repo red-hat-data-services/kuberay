@@ -37,6 +37,17 @@ func (d *RayClusterDefaulter) Default(_ context.Context, obj runtime.Object) err
 	if d.isOpenShift() {
 		rayCluster.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey] = "true"
 		rayclusterlog.Info("enforcing secure trusted network on OpenShift", "name", rayCluster.Name, "namespace", rayCluster.Namespace)
+
+		// STRICT ENFORCEMENT: Always disable basic Route/Ingress creation on OpenShift
+		// This enforces Gateway API access only - no exceptions
+		// Authentication controller will create HTTPRoute for Gateway API authentication
+		// This prevents direct Route access and enforces centralized authentication via Gateway
+		falseValue := false
+		if rayCluster.Spec.HeadGroupSpec.EnableIngress != nil && *rayCluster.Spec.HeadGroupSpec.EnableIngress {
+			rayclusterlog.Info("overriding user-specified enableIngress from true to false to enforce Gateway-only access",
+				"name", rayCluster.Name, "namespace", rayCluster.Namespace)
+		}
+		rayCluster.Spec.HeadGroupSpec.EnableIngress = &falseValue
 	} else {
 		rayCluster.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey] = "false"
 	}
