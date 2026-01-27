@@ -1030,3 +1030,143 @@ func TestCleanupOIDCResources(t *testing.T) {
 		})
 	}
 }
+
+func TestEnforceEnableIngressFalseOnOpenShift(t *testing.T) {
+	s := setupScheme()
+
+	testCases := []struct {
+		initialValue *bool
+		name         string
+		expectUpdate bool
+	}{
+		{
+			name:         "enableIngress is nil - should set to false",
+			initialValue: nil,
+			expectUpdate: true,
+		},
+		{
+			name:         "enableIngress is true - should override to false",
+			initialValue: ptr.To(true),
+			expectUpdate: true,
+		},
+		{
+			name:         "enableIngress is already false - no update needed",
+			initialValue: ptr.To(false),
+			expectUpdate: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create test cluster
+			rayCluster := &rayv1.RayCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: rayv1.RayClusterSpec{
+					HeadGroupSpec: rayv1.HeadGroupSpec{
+						EnableIngress: tc.initialValue,
+					},
+				},
+			}
+
+			// Create fake client with the cluster
+			fakeClient := clientFake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(rayCluster).
+				Build()
+
+			controller := &AuthenticationController{
+				Client:   fakeClient,
+				Scheme:   s,
+				Recorder: record.NewFakeRecorder(10),
+				options: RayClusterReconcilerOptions{
+					IsOpenShift: true,
+				},
+			}
+
+			// Execute
+			err := controller.enforceEnableIngressFalseOnOpenShift(
+				context.Background(),
+				rayCluster,
+				ctrl.Log.WithName("test"))
+
+			// Verify no error
+			require.NoError(t, err, "Enforcement should not return error")
+
+			if tc.expectUpdate {
+				// Get updated cluster from fake client
+				updated := &rayv1.RayCluster{}
+				err = fakeClient.Get(context.Background(),
+					types.NamespacedName{Name: rayCluster.Name, Namespace: rayCluster.Namespace},
+					updated)
+				require.NoError(t, err, "Should be able to get updated cluster")
+
+				// Verify enableIngress is now false
+				require.NotNil(t, updated.Spec.HeadGroupSpec.EnableIngress,
+					"EnableIngress should be set")
+				assert.False(t, *updated.Spec.HeadGroupSpec.EnableIngress,
+					"EnableIngress should be false")
+			}
+		})
+	}
+}
+
+func TestEnforceEnableIngressFalseOnOpenShift_Idempotency(t *testing.T) {
+	s := setupScheme()
+
+	// Create test cluster with enableIngress: true
+	rayCluster := &rayv1.RayCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: rayv1.RayClusterSpec{
+			HeadGroupSpec: rayv1.HeadGroupSpec{
+				EnableIngress: ptr.To(true),
+			},
+		},
+	}
+
+	fakeClient := clientFake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(rayCluster).
+		Build()
+
+	controller := &AuthenticationController{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+		options: RayClusterReconcilerOptions{
+			IsOpenShift: true,
+		},
+	}
+
+	// Call enforcement multiple times
+	for i := 0; i < 3; i++ {
+		// Get latest version
+		err := fakeClient.Get(context.Background(),
+			types.NamespacedName{Name: rayCluster.Name, Namespace: rayCluster.Namespace},
+			rayCluster)
+		require.NoError(t, err)
+
+		// Enforce
+		err = controller.enforceEnableIngressFalseOnOpenShift(
+			context.Background(),
+			rayCluster,
+			ctrl.Log.WithName("test"))
+		require.NoError(t, err, "Enforcement should not error on iteration %d", i)
+	}
+
+	// Verify final state
+	updated := &rayv1.RayCluster{}
+	err := fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: rayCluster.Name, Namespace: rayCluster.Namespace},
+		updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Spec.HeadGroupSpec.EnableIngress)
+	assert.False(t, *updated.Spec.HeadGroupSpec.EnableIngress,
+		"EnableIngress should be false after multiple enforcements")
+}

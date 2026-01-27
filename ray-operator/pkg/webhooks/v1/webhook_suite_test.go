@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -223,6 +224,90 @@ var _ = Describe("RayCluster mutating webhook", func() {
 			// Verify the annotation was set to "true"
 			Expect(rayCluster.Annotations).NotTo(BeNil())
 			Expect(rayCluster.Annotations["odh.ray.io/secure-trusted-network"]).To(Equal("true"))
+		})
+
+		It("should set enableIngress to false on OpenShift when not explicitly set", func() {
+			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
+			rayCluster := &rayv1.RayCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      name,
+				},
+				Spec: rayv1.RayClusterSpec{
+					HeadGroupSpec: rayv1.HeadGroupSpec{
+						// EnableIngress not set (nil)
+						RayStartParams: map[string]string{},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
+							},
+						},
+					},
+					WorkerGroupSpecs: []rayv1.WorkerGroupSpec{},
+				},
+			}
+
+			// Create a mock RESTMapper that simulates OpenShift
+			mockRESTMapper := &mockOpenShiftRESTMapper{}
+			defaulter := &RayClusterDefaulter{
+				RESTMapper: mockRESTMapper,
+			}
+
+			// Call the Default method directly
+			err := defaulter.Default(context.TODO(), rayCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify enableIngress was set to false
+			Expect(rayCluster.Spec.HeadGroupSpec.EnableIngress).NotTo(BeNil())
+			Expect(*rayCluster.Spec.HeadGroupSpec.EnableIngress).To(BeFalse(),
+				"EnableIngress should be set to false to enforce Gateway-only access")
+		})
+
+		It("should enforce enableIngress: false on OpenShift even when user sets true", func() {
+			name := fmt.Sprintf("test-raycluster-%d", rand.IntnRange(1000, 9000))
+			rayCluster := &rayv1.RayCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      name,
+				},
+				Spec: rayv1.RayClusterSpec{
+					HeadGroupSpec: rayv1.HeadGroupSpec{
+						EnableIngress:  ptr.To(true), // User explicitly sets to true
+						RayStartParams: map[string]string{},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "ray-head",
+										Image: "rayproject/ray:latest",
+									},
+								},
+							},
+						},
+					},
+					WorkerGroupSpecs: []rayv1.WorkerGroupSpec{},
+				},
+			}
+
+			// Create a mock RESTMapper that simulates OpenShift
+			mockRESTMapper := &mockOpenShiftRESTMapper{}
+			defaulter := &RayClusterDefaulter{
+				RESTMapper: mockRESTMapper,
+			}
+
+			// Call the Default method directly
+			err := defaulter.Default(context.TODO(), rayCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify enableIngress is forced to false (strict enforcement)
+			Expect(rayCluster.Spec.HeadGroupSpec.EnableIngress).NotTo(BeNil())
+			Expect(*rayCluster.Spec.HeadGroupSpec.EnableIngress).To(BeFalse(),
+				"EnableIngress should be forced to false to enforce Gateway-only access (strict enforcement)")
 		})
 	})
 })
