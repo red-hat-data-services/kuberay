@@ -200,6 +200,18 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 	if !shouldEnable {
 		logger.Info("Authentication not requested for this cluster", "cluster", rayCluster.Name, "mode", authMode)
 
+		// Set AuthenticationReady to True since auth is disabled (no resources needed)
+		meta.SetStatusCondition(&rayCluster.Status.Conditions, metav1.Condition{
+			Type:               string(rayv1.AuthenticationReady),
+			Status:             metav1.ConditionTrue,
+			Reason:             utils.AuthenticationDisabled,
+			Message:            "Authentication not enabled for this cluster",
+			ObservedGeneration: rayCluster.Generation,
+		})
+		if err := r.Status().Update(ctx, rayCluster); err != nil {
+			return fmt.Errorf("failed to update AuthenticationReady condition when auth disabled: %w", err)
+		}
+
 		// Remove finalizer if present (auth is disabled)
 		if controllerutil.ContainsFinalizer(rayCluster, authenticationFinalizer) {
 			logger.Info("Removing authentication finalizer (auth disabled)", "cluster", rayCluster.Name)
@@ -238,7 +250,31 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 
 	// Ensure OIDC resources exist (only after finalizer is present)
 	if err := r.ensureOIDCResources(ctx, rayCluster, authMode, logger); err != nil {
+		// Set condition to False on error
+		meta.SetStatusCondition(&rayCluster.Status.Conditions, metav1.Condition{
+			Type:               string(rayv1.AuthenticationReady),
+			Status:             metav1.ConditionFalse,
+			Reason:             utils.AuthenticationFailed,
+			Message:            fmt.Sprintf("Failed to create authentication resources: %v", err),
+			ObservedGeneration: rayCluster.Generation,
+		})
+		if updateErr := r.Status().Update(ctx, rayCluster); updateErr != nil {
+			logger.Error(updateErr, "Failed to update AuthenticationReady condition")
+		}
 		return fmt.Errorf("failed to ensure OIDC resources: %w", err)
+	}
+
+	// Set condition to True after successful creation
+	meta.SetStatusCondition(&rayCluster.Status.Conditions, metav1.Condition{
+		Type:               string(rayv1.AuthenticationReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             utils.AuthenticationResourcesCreated,
+		Message:            fmt.Sprintf("Authentication resources created successfully (mode: %s)", authMode),
+		ObservedGeneration: rayCluster.Generation,
+	})
+
+	if err := r.Status().Update(ctx, rayCluster); err != nil {
+		return fmt.Errorf("authentication resources created but failed to update AuthenticationReady condition: %w", err)
 	}
 
 	eventMsg := fmt.Sprintf("Authentication configured for RayCluster (mode: %s)", authMode)
