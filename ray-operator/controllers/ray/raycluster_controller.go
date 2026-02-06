@@ -1122,17 +1122,34 @@ func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1
 			// NEW PATTERN: Check AuthenticationReady condition
 			authReadyCondition := meta.FindStatusCondition(instance.Status.Conditions,
 				string(rayv1.AuthenticationReady))
-			if authReadyCondition == nil || authReadyCondition.Status != metav1.ConditionTrue {
+
+			// Check if condition exists, is True, and is fresh (observedGeneration matches current generation)
+			// The observedGeneration check prevents acting on stale conditions from before the current spec change
+			conditionStale := authReadyCondition != nil && authReadyCondition.ObservedGeneration != instance.Generation
+			conditionNotReady := authReadyCondition == nil || authReadyCondition.Status != metav1.ConditionTrue
+
+			if conditionNotReady || conditionStale {
 				reason := utils.AuthenticationPending
 				message := "Waiting for AuthenticationController to create authentication resources"
 				if authReadyCondition != nil {
 					reason = authReadyCondition.Reason
 					message = authReadyCondition.Message
+					if conditionStale {
+						message = fmt.Sprintf("Condition is stale (observedGeneration=%d, currentGeneration=%d): %s",
+							authReadyCondition.ObservedGeneration, instance.Generation, message)
+					}
 				}
 
+				var observedGen int64
+				if authReadyCondition != nil {
+					observedGen = authReadyCondition.ObservedGeneration
+				}
 				logger.Info("Waiting for authentication resources to be ready",
 					"condition", authReadyCondition,
 					"reason", reason,
+					"conditionStale", conditionStale,
+					"observedGeneration", observedGen,
+					"currentGeneration", instance.Generation,
 					"authMode", authMode)
 				r.Recorder.Eventf(&instance, corev1.EventTypeNormal,
 					string(utils.WaitingForAuthentication),
@@ -1141,8 +1158,9 @@ func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1
 				return fmt.Errorf("waiting for AuthenticationReady condition: %s", message)
 			}
 
-			logger.Info("AuthenticationReady condition is True, proceeding with pod creation",
+			logger.Info("AuthenticationReady condition is True and fresh, proceeding with pod creation",
 				"reason", authReadyCondition.Reason,
+				"observedGeneration", authReadyCondition.ObservedGeneration,
 				"authMode", authMode)
 		} else {
 			// LEGACY PATTERN: Check ServiceAccount existence directly (backward compatibility)
