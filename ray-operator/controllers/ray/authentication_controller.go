@@ -243,9 +243,13 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 		if err := r.Update(ctx, rayCluster); err != nil {
 			return fmt.Errorf("failed to add finalizer: %w", err)
 		}
-		// Return early to allow the next reconciliation to create resources
-		// This follows the pattern used in raycluster_controller.go for finalizer handling
-		return nil
+		// Re-fetch the cluster after the update to get the latest resourceVersion
+		// This is necessary because ensureOIDCResources and the status update need the current version
+		if err := r.Get(ctx, req.NamespacedName, rayCluster); err != nil {
+			return fmt.Errorf("failed to re-fetch cluster after adding finalizer: %w", err)
+		}
+		// Continue to create resources immediately - don't return early
+		// This avoids a race where RayClusterController tries to create pods before ServiceAccount exists
 	}
 
 	// Ensure OIDC resources exist (only after finalizer is present)
