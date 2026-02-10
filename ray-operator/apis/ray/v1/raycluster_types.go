@@ -291,6 +291,9 @@ const (
 	RayClusterSuspending RayClusterConditionType = "RayClusterSuspending"
 	// RayClusterSuspended is set to true when all Pods belonging to a suspending RayCluster are deleted. Note that RayClusterSuspending and RayClusterSuspended cannot both be true at the same time.
 	RayClusterSuspended RayClusterConditionType = "RayClusterSuspended"
+	// AuthenticationReady indicates whether authentication resources (ServiceAccount, HTTPRoute, etc.) have been created by the AuthenticationController.
+	// This condition is set to True when authentication is successfully configured or when authentication is not enabled.
+	AuthenticationReady RayClusterConditionType = "AuthenticationReady"
 )
 
 // HeadInfo gives info about head
