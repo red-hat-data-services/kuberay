@@ -344,6 +344,7 @@ const (
 	FailedToCreateServiceAccount     K8sEventType = "FailedToCreateServiceAccount"
 	AutoscalerServiceAccountNotFound K8sEventType = "AutoscalerServiceAccountNotFound"
 	WaitingForServiceAccount         K8sEventType = "WaitingForServiceAccount"
+	WaitingForAuthentication         K8sEventType = "WaitingForAuthentication"
 
 	// Role event list
 	CreatedRole        K8sEventType = "CreatedRole"
@@ -352,4 +353,12 @@ const (
 	// RoleBinding list
 	CreatedRoleBinding        K8sEventType = "CreatedRoleBinding"
 	FailedToCreateRoleBinding K8sEventType = "FailedToCreateRoleBinding"
+)
+
+// Authentication condition reasons
+const (
+	AuthenticationResourcesCreated = "AuthenticationResourcesCreated"
+	AuthenticationDisabled         = "AuthenticationDisabled"
+	AuthenticationPending          = "AuthenticationPending"
+	AuthenticationFailed           = "AuthenticationFailed"
 )

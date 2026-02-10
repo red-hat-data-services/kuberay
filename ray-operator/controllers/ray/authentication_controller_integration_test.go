@@ -292,6 +292,7 @@ func TestFullReconciliationLifecycle(t *testing.T) {
 	fakeClient := clientFake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(cluster).
+		WithStatusSubresource(&rayv1.RayCluster{}).
 		Build()
 
 	mapper := &mockRESTMapper{hasRouteAPI: true}
