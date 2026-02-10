@@ -23,7 +23,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/kuberay-operator:v1.4.3
+    value: quay.io/opendatahub/kuberay-operator:v1.4.4
   - name: dockerfile
     value: Dockerfile.rhoai
   - name: path-context
