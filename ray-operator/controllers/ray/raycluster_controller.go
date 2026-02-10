@@ -1111,32 +1111,80 @@ func (r *RayClusterReconciler) createService(ctx context.Context, svc *corev1.Se
 func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// Check if authentication is enabled and if the required ServiceAccount exists
+	// Check if authentication is enabled and if the required resources are ready
 	// This prevents a race condition where the pod is created before the AuthenticationController
-	// has had a chance to create the ServiceAccount
+	// has created the required resources (ServiceAccount, HTTPRoute, etc.)
 	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
 	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
 	if shouldEnableAuth {
-		namer := utils.NewResourceNamer(&instance)
-		saName := namer.ServiceAccountName(authMode)
-		sa := &corev1.ServiceAccount{}
-		if err := r.Get(ctx, client.ObjectKey{Name: saName, Namespace: instance.Namespace}, sa); err != nil {
-			if errors.IsNotFound(err) {
-				logger.Info("Waiting for AuthenticationController to create ServiceAccount, will retry",
-					"serviceAccount", saName,
-					"namespace", instance.Namespace,
+		// Use feature gate to enable new condition-based coordination
+		if features.Enabled(features.RayClusterStatusConditions) {
+			// NEW PATTERN: Check AuthenticationReady condition
+			authReadyCondition := meta.FindStatusCondition(instance.Status.Conditions,
+				string(rayv1.AuthenticationReady))
+
+			// Check if condition exists, is True, and is fresh (observedGeneration matches current generation)
+			// The observedGeneration check prevents acting on stale conditions from before the current spec change
+			conditionStale := authReadyCondition != nil && authReadyCondition.ObservedGeneration != instance.Generation
+			conditionNotReady := authReadyCondition == nil || authReadyCondition.Status != metav1.ConditionTrue
+
+			if conditionNotReady || conditionStale {
+				reason := utils.AuthenticationPending
+				message := "Waiting for AuthenticationController to create authentication resources"
+				if authReadyCondition != nil {
+					reason = authReadyCondition.Reason
+					message = authReadyCondition.Message
+					if conditionStale {
+						message = fmt.Sprintf("Condition is stale (observedGeneration=%d, currentGeneration=%d): %s",
+							authReadyCondition.ObservedGeneration, instance.Generation, message)
+					}
+				}
+
+				var observedGen int64
+				if authReadyCondition != nil {
+					observedGen = authReadyCondition.ObservedGeneration
+				}
+				logger.Info("Waiting for authentication resources to be ready",
+					"condition", authReadyCondition,
+					"reason", reason,
+					"conditionStale", conditionStale,
+					"observedGeneration", observedGen,
+					"currentGeneration", instance.Generation,
 					"authMode", authMode)
-				r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.WaitingForServiceAccount),
-					"Waiting for ServiceAccount %s to be created by AuthenticationController", saName)
-				// Return error to trigger retry - the AuthenticationController will create the SA
-				return fmt.Errorf("waiting for ServiceAccount %s to be created for authentication", saName)
+				r.Recorder.Eventf(&instance, corev1.EventTypeNormal,
+					string(utils.WaitingForAuthentication),
+					"Waiting for authentication resources: %s", message)
+
+				return fmt.Errorf("waiting for AuthenticationReady condition: %s", message)
 			}
-			// Other errors (not NotFound) should be returned
-			return fmt.Errorf("failed to check ServiceAccount %s: %w", saName, err)
+
+			logger.Info("AuthenticationReady condition is True and fresh, proceeding with pod creation",
+				"reason", authReadyCondition.Reason,
+				"observedGeneration", authReadyCondition.ObservedGeneration,
+				"authMode", authMode)
+		} else {
+			// LEGACY PATTERN: Check ServiceAccount existence directly (backward compatibility)
+			namer := utils.NewResourceNamer(&instance)
+			saName := namer.ServiceAccountName(authMode)
+			sa := &corev1.ServiceAccount{}
+			if err := r.Get(ctx, client.ObjectKey{Name: saName, Namespace: instance.Namespace}, sa); err != nil {
+				if errors.IsNotFound(err) {
+					logger.Info("Waiting for AuthenticationController to create ServiceAccount, will retry",
+						"serviceAccount", saName,
+						"namespace", instance.Namespace,
+						"authMode", authMode)
+					r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.WaitingForServiceAccount),
+						"Waiting for ServiceAccount %s to be created by AuthenticationController", saName)
+					// Return error to trigger retry - the AuthenticationController will create the SA
+					return fmt.Errorf("waiting for ServiceAccount %s to be created for authentication", saName)
+				}
+				// Other errors (not NotFound) should be returned
+				return fmt.Errorf("failed to check ServiceAccount %s: %w", saName, err)
+			}
+			logger.Info("ServiceAccount exists, proceeding with pod creation",
+				"serviceAccount", saName,
+				"namespace", instance.Namespace)
 		}
-		logger.Info("ServiceAccount exists, proceeding with pod creation",
-			"serviceAccount", saName,
-			"namespace", instance.Namespace)
 	}
 
 	// build the pod then create it
