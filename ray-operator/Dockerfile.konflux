@@ -33,7 +33,8 @@ USER 65532:65532
 
 ENTRYPOINT ["/manager"]
 LABEL com.redhat.component="odh-kuberay-operator-controller-container" \
-      name="managed-open-data-hub/odh-kuberay-operator-controller-container-rhel8" \
+      name="rhoai/odh-kuberay-operator-controller-rhel9" \
+      cpe="cpe:/a:redhat:openshift_ai:2.21::el9" \
       description="Manages lifecycle of RayClusters, RayJobs, RayServices and associated Kubernetes resources" \
       summary="odh-kuberay-operator-controller-container" \
       maintainer="['managed-open-data-hub@redhat.com']" \
