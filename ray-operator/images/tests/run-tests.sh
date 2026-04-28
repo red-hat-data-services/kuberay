@@ -16,14 +16,11 @@ EXTRA_ARGS=()
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
-    echo "  -testTier=VALUE    Specify test tier (Sanity, Tier1, or Sanity,Tier1)"
+    echo "  -testTier=VALUE    Specify test tier (only Tier1 is supported)"
     echo "  -h, -help          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 -testTier=Sanity"
     echo "  $0 -testTier=Tier1"
-    echo "  $0 -testTier=Sanity,Tier1"
-    echo "  $0 -testTier=\"Sanity Tier1\""
     exit 0
 }
 
@@ -58,17 +55,15 @@ fi
 TEST_RUN_REGEX=""
 
 # Handle different combinations of test tags
-if [[ "$TEST_TAGS" == *"Sanity"* && "$TEST_TAGS" == *"Tier1"* ]]; then
-    echo "Running Sanity and Tier1 kuberay e2e tests"
+if [[ "$TEST_TAGS" == *"Tier1"* ]]; then
+    echo "Running Tier1 kuberay e2e tests"
     TEST_RUN_REGEX="^(TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode)$"
 elif [[ "$TEST_TAGS" == *"Sanity"* ]]; then
-    echo "Running Sanity kuberay e2e tests"
-    TEST_RUN_REGEX="^TestRayJobWithClusterSelector$"
-elif [[ "$TEST_TAGS" == *"Tier1"* ]]; then
-    echo "Running Tier1 kuberay tests"
-    TEST_RUN_REGEX="^(TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode)$"
+    echo "Warning: 'Sanity' tier is no longer supported. Only 'Tier1' is supported."
+    echo ""
+    show_usage
 else
-    echo "Info: Invalid test tier '$TEST_TAGS'. Valid options are: Sanity, Tier1, or both (Sanity,Tier1 or 'Sanity Tier1')"
+    echo "Info: Invalid test tier '$TEST_TAGS'. Only 'Tier1' is supported."
     echo ""
     show_usage
 fi
