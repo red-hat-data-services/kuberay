@@ -1,6 +1,9 @@
 name: Fast-forward stable branch from dev (Bodies of Water)
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
     inputs:
       dry_run:
@@ -114,13 +117,13 @@ jobs:
           git log --oneline ${{ steps.check_changes.outputs.stable_sha }}..${{ steps.fast_forward.outputs.new_stable_sha }}
 
       - name: Push changes to stable
-        if: steps.check_changes.outputs.has_changes == 'true' && steps.fast_forward.outputs.merge_successful == 'true' && inputs.dry_run == false
+        if: steps.check_changes.outputs.has_changes == 'true' && steps.fast_forward.outputs.merge_successful == 'true' && inputs.dry_run != true
         run: |
           git push origin stable
           echo "✅ Successfully pushed fast-forward changes to stable branch"
 
       - name: Verify final state
-        if: steps.check_changes.outputs.has_changes == 'true' && steps.fast_forward.outputs.merge_successful == 'true' && inputs.dry_run == false
+        if: steps.check_changes.outputs.has_changes == 'true' && steps.fast_forward.outputs.merge_successful == 'true' && inputs.dry_run != true
         run: |
           # Fetch the latest state from remote
           git fetch origin stable
