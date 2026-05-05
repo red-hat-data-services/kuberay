@@ -16,11 +16,13 @@ EXTRA_ARGS=()
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
-    echo "  -testTier=VALUE    Specify test tier (only Tier1 is supported)"
+    echo "  -testTier=VALUE    Specify test tier(s): Tier1, Smoke"
     echo "  -h, -help          Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 -testTier=Tier1"
+    echo "  $0 -testTier=Smoke"
+    echo "  $0 -testTier=Tier1,Smoke"
     exit 0
 }
 
@@ -52,21 +54,43 @@ if [[ -z "$TEST_TAGS" ]]; then
     show_usage
 fi
 
-TEST_RUN_REGEX=""
+REGEX_PARTS=()
 
-# Handle different combinations of test tags
-if [[ "$TEST_TAGS" == *"Tier1"* ]]; then
-    echo "Running Tier1 kuberay e2e tests"
-    TEST_RUN_REGEX="^(TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode)$"
-elif [[ "$TEST_TAGS" == *"Sanity"* ]]; then
-    echo "Warning: 'Sanity' tier is no longer supported. Only 'Tier1' is supported."
-    echo ""
-    show_usage
-else
-    echo "Info: Invalid test tier '$TEST_TAGS'. Only 'Tier1' is supported."
-    echo ""
+IFS=',' read -ra TIER_LIST <<< "$TEST_TAGS"
+for TIER in "${TIER_LIST[@]}"; do
+    # trim leading/trailing whitespace
+    TIER="${TIER#"${TIER%%[![:space:]]*}"}"
+    TIER="${TIER%"${TIER##*[![:space:]]}"}"
+    [[ -z "$TIER" ]] && continue
+    case "$TIER" in
+        Tier1)
+            echo "Adding Tier1 kuberay e2e tests"
+            REGEX_PARTS+=("TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode")
+            ;;
+        Smoke)
+            echo "Adding Smoke kuberay e2e tests (authentication validation)"
+            REGEX_PARTS+=("TestRayClusterAuthentication")
+            ;;
+        Sanity)
+            echo "Warning: 'Sanity' tier is no longer supported. Use 'Tier1' or 'Smoke'."
+            echo ""
+            show_usage
+            ;;
+        *)
+            echo "Info: Invalid test tier '$TIER'. Supported tiers: Tier1, Smoke."
+            echo ""
+            show_usage
+            ;;
+    esac
+done
+
+if [[ ${#REGEX_PARTS[@]} -eq 0 ]]; then
+    echo "Error: No valid test tiers resolved."
     show_usage
 fi
+
+TEST_RUN_REGEX="^($(IFS='|'; echo "${REGEX_PARTS[*]}"))$"
+echo "Running e2e tests matching: $TEST_RUN_REGEX"
 
 # Run tests with junit XML output
 gotestsum --format standard-verbose --junitfile results/xunit_report.xml --junitfile-testsuite-name short --junitfile-testcase-classname relative -- -timeout 30m -run "$TEST_RUN_REGEX" ./test/e2e -p 1 -parallel 1 "${EXTRA_ARGS[@]}"
