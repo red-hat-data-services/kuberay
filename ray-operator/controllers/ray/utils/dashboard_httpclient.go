@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"context"
+	stdErrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,8 @@ var (
 	// Job URL paths
 	JobPath = "/api/jobs/"
 )
+
+const maxDashboardResponseBodyBytes int64 = 4 << 20 // 4 MiB
 
 type RayDashboardClientInterface interface {
 	InitClient(ctx context.Context, url string, rayCluster *rayv1.RayCluster) error
@@ -267,9 +270,9 @@ func (r *RayDashboardClient) GetJobInfo(ctx context.Context, jobId string) (*Ray
 		return nil, errors.NewBadRequest("Job " + jobId + " does not exist on the cluster")
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxDashboardResponseBodyBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GetJobInfo fail: %w", err)
 	}
 
 	var jobInfo RayJobInfo
@@ -407,7 +410,10 @@ func (r *RayDashboardClient) StopJob(ctx context.Context, jobName string) (err e
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxDashboardResponseBodyBytes)
+	if err != nil {
+		return fmt.Errorf("StopJob fail: %w", err)
+	}
 
 	var jobStopResp RayJobStopResponse
 	if err = json.Unmarshal(body, &jobStopResp); err != nil {
@@ -425,6 +431,18 @@ func (r *RayDashboardClient) StopJob(ctx context.Context, jobName string) (err e
 		}
 	}
 	return nil
+}
+
+func readLimitedBody(body io.Reader, limit int64) ([]byte, error) {
+	limitedReader := io.LimitReader(body, limit+1)
+	responseBody, err := io.ReadAll(limitedReader)
+	if err != nil && !stdErrors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if int64(len(responseBody)) > limit {
+		return nil, fmt.Errorf("response body exceeds limit of %d bytes", limit)
+	}
+	return responseBody, nil
 }
 
 func (r *RayDashboardClient) DeleteJob(ctx context.Context, jobName string) error {

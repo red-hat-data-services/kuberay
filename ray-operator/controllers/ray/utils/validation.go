@@ -153,9 +153,6 @@ func ValidateRayJobSpec(rayJob *rayv1.RayJob) error {
 	}
 
 	isClusterSelectorMode := len(rayJob.Spec.ClusterSelector) != 0
-	if rayJob.Spec.Suspend && isClusterSelectorMode {
-		return fmt.Errorf("the ClusterSelector mode doesn't support the suspend operation")
-	}
 	if rayJob.Spec.RayClusterSpec == nil && !isClusterSelectorMode {
 		return fmt.Errorf("one of RayClusterSpec or ClusterSelector must be set")
 	}
