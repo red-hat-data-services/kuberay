@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/jarcoal/httpmock"
 	. "github.com/onsi/ginkgo/v2"
@@ -170,5 +171,33 @@ var _ = Describe("RayFrameworkGenerator", func() {
 
 		err := rayDashboardClient.StopJob(context.TODO(), "stop-job-1")
 		Expect(err).ToNot(HaveOccurred())
+	})
+
+	It("Test GetJobInfo response too large", func() {
+		httpmock.Activate()
+		defer httpmock.DeactivateAndReset()
+		httpmock.RegisterResponder("GET", rayDashboardClient.dashboardURL+JobPath+"large-job",
+			func(_ *http.Request) (*http.Response, error) {
+				largeBody := strings.Repeat("a", int(maxDashboardResponseBodyBytes+1))
+				return httpmock.NewStringResponse(200, largeBody), nil
+			})
+
+		_, err := rayDashboardClient.GetJobInfo(context.TODO(), "large-job")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("response body exceeds limit"))
+	})
+
+	It("Test StopJob response too large", func() {
+		httpmock.Activate()
+		defer httpmock.DeactivateAndReset()
+		httpmock.RegisterResponder("POST", rayDashboardClient.dashboardURL+JobPath+"large-stop-job/stop",
+			func(_ *http.Request) (*http.Response, error) {
+				largeBody := strings.Repeat("a", int(maxDashboardResponseBodyBytes+1))
+				return httpmock.NewStringResponse(200, largeBody), nil
+			})
+
+		err := rayDashboardClient.StopJob(context.TODO(), "large-stop-job")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("response body exceeds limit"))
 	})
 })
