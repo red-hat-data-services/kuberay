@@ -71,6 +71,7 @@ const (
 // resources (ConfigMaps, ServiceAccounts, OpenShift Routes) and manages authentication configurations for Ray clusters on Openshift.
 type AuthenticationController struct {
 	client.Client
+	APIReader  client.Reader
 	Recorder   record.EventRecorder
 	Scheme     *runtime.Scheme
 	RESTMapper meta.RESTMapper
@@ -81,6 +82,7 @@ type AuthenticationController struct {
 func NewAuthenticationController(mgr manager.Manager, options RayClusterReconcilerOptions) *AuthenticationController {
 	return &AuthenticationController{
 		Client:     mgr.GetClient(),
+		APIReader:  mgr.GetAPIReader(),
 		Scheme:     mgr.GetScheme(),
 		RESTMapper: mgr.GetRESTMapper(),
 		Recorder:   mgr.GetEventRecorderFor("authentication-controller"),
@@ -737,13 +739,11 @@ func (r *AuthenticationController) ensureOIDCConfigMap(ctx context.Context, clus
 		},
 	}
 
-	opResult, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
-		// Set controller reference
+	mutateFn := func() error {
 		if err := controllerutil.SetControllerReference(cluster, configMap, r.Scheme); err != nil {
 			return err
 		}
 
-		// Build ConfigMap data dynamically
 		configYAML := fmt.Sprintf(`
 authorization:
   resourceAttributes:
@@ -756,7 +756,6 @@ authorization:
     resourceName: "%s"
 `, cluster.Name+"-head-svc")
 
-		// Set labels and data
 		if configMap.Labels == nil {
 			configMap.Labels = make(map[string]string)
 		}
@@ -769,7 +768,24 @@ authorization:
 		configMap.Data["config.yaml"] = configYAML
 
 		return nil
-	})
+	}
+
+	opResult, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, mutateFn)
+	if errors.IsAlreadyExists(err) {
+		// ConfigMap exists but is not visible to the scoped cache (pre-upgrade, missing label).
+		// Fetch directly from the API server, apply mutations, and update.
+		if getErr := r.APIReader.Get(ctx, client.ObjectKeyFromObject(configMap), configMap); getErr != nil {
+			return fmt.Errorf("failed to get existing unlabeled ConfigMap: %w", getErr)
+		}
+		if mutErr := mutateFn(); mutErr != nil {
+			return fmt.Errorf("failed to mutate existing ConfigMap: %w", mutErr)
+		}
+		if updateErr := r.Client.Update(ctx, configMap); updateErr != nil {
+			return fmt.Errorf("failed to update existing ConfigMap with label: %w", updateErr)
+		}
+		logger.Info("OIDC ConfigMap adopted (added cache label)", "name", configMap.Name)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create or update OIDC ConfigMap: %w", err)
 	}
