@@ -2,8 +2,11 @@ package ray
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	errstd "errors"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"runtime"
@@ -22,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,7 +37,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
@@ -53,7 +56,7 @@ var (
 )
 
 // NewReconciler returns a new reconcile.Reconciler
-func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterReconcilerOptions, rayConfigs configapi.Configuration) *RayClusterReconciler {
+func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterReconcilerOptions) *RayClusterReconciler {
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.Pod{}, podUIDIndexField, func(rawObj client.Object) []string {
 		pod := rawObj.(*corev1.Pod)
 		return []string{string(pod.UID)}
@@ -61,21 +64,10 @@ func NewReconciler(ctx context.Context, mgr manager.Manager, options RayClusterR
 		panic(err)
 	}
 
-	// init the batch scheduler manager
-	schedulerMgr, err := batchscheduler.NewSchedulerManager(ctx, rayConfigs, mgr.GetConfig())
-	if err != nil {
-		// fail fast if the scheduler plugin fails to init
-		// prevent running the controller in an undefined state
-		panic(err)
-	}
-
-	// add schema to runtime
-	schedulerMgr.AddToScheme(mgr.GetScheme())
 	return &RayClusterReconciler{
 		Client:                     mgr.GetClient(),
 		Scheme:                     mgr.GetScheme(),
 		Recorder:                   mgr.GetEventRecorderFor("raycluster-controller"),
-		BatchSchedulerMgr:          schedulerMgr,
 		rayClusterScaleExpectation: expectations.NewRayClusterScaleExpectation(mgr.GetClient()),
 		options:                    options,
 	}
@@ -86,15 +78,16 @@ type RayClusterReconciler struct {
 	client.Client
 	Scheme                     *k8sruntime.Scheme
 	Recorder                   record.EventRecorder
-	BatchSchedulerMgr          *batchscheduler.SchedulerManager
 	rayClusterScaleExpectation expectations.RayClusterScaleExpectation
 	options                    RayClusterReconcilerOptions
 }
 
 type RayClusterReconcilerOptions struct {
 	RayClusterMetricsManager *metrics.RayClusterMetricsManager
+	BatchSchedulerManager    *batchscheduler.SchedulerManager
 	HeadSidecarContainers    []corev1.Container
 	WorkerSidecarContainers  []corev1.Container
+	DefaultContainerEnvs     []corev1.EnvVar
 	IsOpenShift              bool
 }
 
@@ -107,6 +100,8 @@ type RayClusterReconcilerOptions struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete;deletecollection
 // +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=pods/resize,verbs=patch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
@@ -134,7 +129,8 @@ func (r *RayClusterReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	// No match found
 	if errors.IsNotFound(err) {
 		// Clear all related expectations
-		r.rayClusterScaleExpectation.Delete(instance.Name, instance.Namespace)
+		r.rayClusterScaleExpectation.Delete(request.Name, request.Namespace)
+		cleanUpRayClusterMetrics(r.options.RayClusterMetricsManager, request.Name, request.Namespace)
 	} else {
 		logger.Error(err, "Read request instance error!")
 	}
@@ -182,6 +178,13 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 		logger.Error(err, "The RayCluster spec is invalid")
 		r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.InvalidRayClusterSpec),
 			"The RayCluster spec is invalid %s/%s: %v", instance.Namespace, instance.Name, err)
+		return ctrl.Result{}, nil
+	}
+
+	if err := utils.ValidateRayClusterUpgradeOptions(instance); err != nil {
+		logger.Error(err, "The RayCluster UpgradeStrategy is invalid")
+		r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.InvalidRayClusterSpec),
+			"The RayCluster UpgradeStrategy is invalid %s/%s: %v", instance.Namespace, instance.Name, err)
 		return ctrl.Result{}, nil
 	}
 
@@ -306,6 +309,7 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 		r.reconcileAutoscalerRole,
 		r.reconcileAutoscalerRoleBinding,
 		r.reconcileIngress,
+		r.reconcileAuthSecret,
 		r.reconcileHeadService,
 		r.reconcileHeadlessService,
 		r.reconcileServeService,
@@ -362,60 +366,70 @@ func (r *RayClusterReconciler) rayClusterReconcile(ctx context.Context, instance
 	return ctrl.Result{RequeueAfter: time.Duration(requeueAfterSeconds) * time.Second}, nil
 }
 
-// Checks whether the old and new RayClusterStatus are inconsistent by comparing different fields. If the only
-// differences between the old and new status are the `LastUpdateTime` and `ObservedGeneration` fields, the
-// status update will not be triggered.
-//
-// TODO (kevin85421): The field `ObservedGeneration` is not being well-maintained at the moment. In the future,
-// this field should be used to determine whether to update this CR or not.
-func (r *RayClusterReconciler) inconsistentRayClusterStatus(ctx context.Context, oldStatus rayv1.RayClusterStatus, newStatus rayv1.RayClusterStatus) bool {
+func (r *RayClusterReconciler) reconcileAuthSecret(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
+	logger.Info("Reconciling Auth")
 
-	if oldStatus.State != newStatus.State || oldStatus.Reason != newStatus.Reason {
-		logger.Info(
-			"inconsistentRayClusterStatus",
-			"oldState", oldStatus.State,
-			"newState", newStatus.State,
-			"oldReason", oldStatus.Reason,
-			"newReason", newStatus.Reason,
-		)
-		return true
+	if instance.Spec.AuthOptions == nil || instance.Spec.AuthOptions.Mode == rayv1.AuthModeDisabled {
+		return nil
 	}
-	if oldStatus.ReadyWorkerReplicas != newStatus.ReadyWorkerReplicas ||
-		oldStatus.AvailableWorkerReplicas != newStatus.AvailableWorkerReplicas ||
-		oldStatus.DesiredWorkerReplicas != newStatus.DesiredWorkerReplicas ||
-		oldStatus.MinWorkerReplicas != newStatus.MinWorkerReplicas ||
-		oldStatus.MaxWorkerReplicas != newStatus.MaxWorkerReplicas {
-		logger.Info(
-			"inconsistentRayClusterStatus",
-			"oldReadyWorkerReplicas", oldStatus.ReadyWorkerReplicas,
-			"newReadyWorkerReplicas", newStatus.ReadyWorkerReplicas,
-			"oldAvailableWorkerReplicas", oldStatus.AvailableWorkerReplicas,
-			"newAvailableWorkerReplicas", newStatus.AvailableWorkerReplicas,
-			"oldDesiredWorkerReplicas", oldStatus.DesiredWorkerReplicas,
-			"newDesiredWorkerReplicas", newStatus.DesiredWorkerReplicas,
-			"oldMinWorkerReplicas", oldStatus.MinWorkerReplicas,
-			"newMinWorkerReplicas", newStatus.MinWorkerReplicas,
-			"oldMaxWorkerReplicas", oldStatus.MaxWorkerReplicas,
-			"newMaxWorkerReplicas", newStatus.MaxWorkerReplicas,
-		)
-		return true
+
+	// When K8s token auth is enabled, authentication is delegated to the K8s API server
+	// via ServiceAccount tokens, so no Secret needs to be created.
+	if utils.IsK8sAuthEnabled(instance.Spec.AuthOptions) {
+		return nil
 	}
-	if !reflect.DeepEqual(oldStatus.Endpoints, newStatus.Endpoints) || !reflect.DeepEqual(oldStatus.Head, newStatus.Head) {
-		logger.Info(
-			"inconsistentRayClusterStatus",
-			"oldEndpoints", oldStatus.Endpoints,
-			"newEndpoints", newStatus.Endpoints,
-			"oldHead", oldStatus.Head,
-			"newHead", newStatus.Head,
-		)
-		return true
+
+	if instance.Spec.AuthOptions.SecretName != nil && *instance.Spec.AuthOptions.SecretName != "" {
+		return nil
 	}
-	if !reflect.DeepEqual(oldStatus.Conditions, newStatus.Conditions) {
-		logger.Info("inconsistentRayClusterStatus", "old conditions", oldStatus.Conditions, "new conditions", newStatus.Conditions)
-		return true
+
+	secret := &corev1.Secret{}
+	secretName := utils.CheckName(instance.Name)
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: instance.Namespace}, secret)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return r.createAuthSecret(ctx, instance, secretName)
+		}
+		return err
 	}
-	return false
+
+	return nil
+}
+
+// createAuthSecret generates a new secret with a random token.
+func (r *RayClusterReconciler) createAuthSecret(ctx context.Context, rayCluster *rayv1.RayCluster, secretName string) error {
+	token, err := generateRandomToken(32)
+	if err != nil {
+		return err
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: rayCluster.Namespace,
+			Labels: map[string]string{
+				utils.RayClusterLabelKey: rayCluster.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(rayCluster, rayv1.SchemeGroupVersion.WithKind("RayCluster")),
+			},
+		},
+		StringData: map[string]string{
+			"auth_token": token,
+		},
+	}
+
+	return r.Create(ctx, secret)
+}
+
+// generateRandomToken creates a random base64 encoded string.
+func generateRandomToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(bytes), nil
 }
 
 func (r *RayClusterReconciler) reconcileIngress(ctx context.Context, instance *rayv1.RayCluster) error {
@@ -423,7 +437,6 @@ func (r *RayClusterReconciler) reconcileIngress(ctx context.Context, instance *r
 	logger.Info("Reconciling Ingress")
 
 	if instance.Spec.HeadGroupSpec.EnableIngress == nil || !*instance.Spec.HeadGroupSpec.EnableIngress {
-		// Clean up any existing Routes/Ingresses when enableIngress is false
 		logger.Info("EnableIngress is false, cleaning up any existing Routes/Ingresses")
 		return r.cleanupIngress(ctx, instance)
 	}
@@ -498,20 +511,16 @@ func (r *RayClusterReconciler) reconcileIngressKubernetes(ctx context.Context, i
 	return nil
 }
 
-// cleanupIngress removes any existing Routes (OpenShift) or Ingresses (Kubernetes) for the RayCluster
-// This is called when enableIngress is set to false to ensure no direct access paths exist
+// cleanupIngress removes any existing Routes (OpenShift) or Ingresses (Kubernetes) for the RayCluster.
 func (r *RayClusterReconciler) cleanupIngress(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
 
 	if r.options.IsOpenShift {
-		// Clean up OpenShift Routes
 		return r.cleanupRoutes(ctx, instance, logger)
 	}
-	// Clean up Kubernetes Ingresses
 	return r.cleanupIngresses(ctx, instance, logger)
 }
 
-// cleanupRoutes removes any existing OpenShift Routes for the RayCluster
 func (r *RayClusterReconciler) cleanupRoutes(ctx context.Context, instance *rayv1.RayCluster, logger logr.Logger) error {
 	headRoutes := routev1.RouteList{}
 	filterLabels := common.RayClusterNetworkResourcesOptions(instance).ToListOptions()
@@ -528,10 +537,8 @@ func (r *RayClusterReconciler) cleanupRoutes(ctx context.Context, instance *rayv
 				logger.Error(err, "Failed to delete Route", "route", route.Name)
 				return err
 			}
-			// Route already deleted (IsNotFound) - skip event
 			logger.V(1).Info("Route already deleted", "route", route.Name)
 		} else {
-			// Successfully deleted - emit event
 			r.Recorder.Eventf(instance, corev1.EventTypeNormal,
 				"RouteDeleted", "Deleted Route %s (enableIngress is false)", route.Name)
 		}
@@ -540,7 +547,6 @@ func (r *RayClusterReconciler) cleanupRoutes(ctx context.Context, instance *rayv
 	return nil
 }
 
-// cleanupIngresses removes any existing Kubernetes Ingresses for the RayCluster
 func (r *RayClusterReconciler) cleanupIngresses(ctx context.Context, instance *rayv1.RayCluster, logger logr.Logger) error {
 	headIngresses := networkingv1.IngressList{}
 	filterLabels := common.RayClusterNetworkResourcesOptions(instance).ToListOptions()
@@ -557,10 +563,8 @@ func (r *RayClusterReconciler) cleanupIngresses(ctx context.Context, instance *r
 				logger.Error(err, "Failed to delete Ingress", "ingress", ingress.Name)
 				return err
 			}
-			// Ingress already deleted (IsNotFound) - skip event
 			logger.V(1).Info("Ingress already deleted", "ingress", ingress.Name)
 		} else {
-			// Successfully deleted - emit event
 			r.Recorder.Eventf(instance, corev1.EventTypeNormal,
 				"IngressDeleted", "Deleted Ingress %s (enableIngress is false)", ingress.Name)
 		}
@@ -599,9 +603,7 @@ func (r *RayClusterReconciler) reconcileHeadService(ctx context.Context, instanc
 		annotations := make(map[string]string)
 		// TODO (kevin85421): KubeRay has already exposed the entire head service (#1040) to users.
 		// We may consider deprecating this field when we bump the CRD version.
-		for k, v := range instance.Spec.HeadServiceAnnotations {
-			annotations[k] = v
-		}
+		maps.Copy(annotations, instance.Spec.HeadServiceAnnotations)
 		headSvc, err := common.BuildServiceForHeadPod(ctx, *instance, labels, annotations)
 		// TODO (kevin85421): Provide a detailed and actionable error message. For example, which port is missing?
 		if len(headSvc.Spec.Ports) == 0 {
@@ -687,6 +689,12 @@ func (r *RayClusterReconciler) reconcileHeadlessService(ctx context.Context, ins
 func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv1.RayCluster) error {
 	logger := ctrl.LoggerFrom(ctx)
 
+	// Calculate RayCluster spec hash for the UpgradeStrategy
+	clusterHash, err := utils.GenerateHashWithoutReplicasAndWorkersToDelete(instance.Spec)
+	if err != nil {
+		return err
+	}
+
 	// if RayCluster is suspending, delete all pods and skip reconcile
 	suspendStatus := utils.FindRayClusterSuspendStatus(instance)
 	statusConditionGateEnabled := features.Enabled(features.RayClusterStatusConditions)
@@ -715,12 +723,20 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 		}
 	}
 
-	// Check if mTLS is enabled and verify certificate secrets are ready before creating pods
-	if r.isMTLSEnabled(instance) {
-		if err := r.checkMTLSSecretsReady(ctx, instance); err != nil {
-			logger.Info("mTLS secrets not ready yet, requeuing", "error", err.Error())
-			return fmt.Errorf("mTLS secrets not ready: %w", err)
+	// Check if pods need to be recreated with Recreate upgradeStrategy
+	if r.shouldRecreatePodsForUpgrade(ctx, instance) {
+		logger.Info("RayCluster spec changed with Recreate upgradeStrategy, deleting all pods")
+		if _, err := r.deleteAllPods(ctx, common.RayClusterAllPodsAssociationOptions(instance)); err != nil {
+			r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.FailedToDeletePodCollection),
+				"Failed deleting Pods due to spec change with Recreate upgradeStrategy for RayCluster %s/%s, %v",
+				instance.Namespace, instance.Name, err)
+			return errstd.Join(utils.ErrFailedDeleteAllPods, err)
 		}
+		r.rayClusterScaleExpectation.Delete(instance.Name, instance.Namespace)
+		r.Recorder.Eventf(instance, corev1.EventTypeNormal, string(utils.DeletedPod),
+			"Deleted all Pods for RayCluster %s/%s due to spec change with Recreate upgradeStrategy",
+			instance.Namespace, instance.Name)
+		return nil
 	}
 
 	// check if all the pods exist
@@ -730,8 +746,8 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 	}
 	// check if the batch scheduler integration is enabled
 	// call the scheduler plugin if so
-	if r.BatchSchedulerMgr != nil {
-		if scheduler, err := r.BatchSchedulerMgr.GetSchedulerForCluster(); err == nil {
+	if r.options.BatchSchedulerManager != nil {
+		if scheduler, err := r.options.BatchSchedulerManager.GetScheduler(); err == nil {
 			if err := scheduler.DoBatchSchedulingOnSubmission(ctx, instance); err != nil {
 				return err
 			}
@@ -750,13 +766,6 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			"Ray container terminated status", getRayContainerStateTerminated(headPod))
 
 		shouldDelete, reason := shouldDeletePod(headPod, rayv1.HeadNode)
-
-		// Check if mTLS is enabled but pod doesn't have mTLS configuration
-		if !shouldDelete && r.isMTLSEnabled(instance) && !podHasMTLSConfiguration(headPod) {
-			shouldDelete = true
-			reason = fmt.Sprintf("mTLS is enabled but head Pod %s doesn't have mTLS configuration. Pod needs to be recreated with mTLS volumes and environment variables.", headPod.Name)
-		}
-
 		logger.Info("reconcilePods", "head Pod", headPod.Name, "shouldDelete", shouldDelete, "reason", reason)
 		if shouldDelete {
 			if err := r.Delete(ctx, &headPod); err != nil {
@@ -772,9 +781,28 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			return errstd.New(reason)
 		}
 	} else if len(headPods.Items) == 0 {
+		if meta.IsStatusConditionTrue(instance.Status.Conditions, string(rayv1.RayClusterProvisioned)) &&
+			shouldSkipHeadPodRestart(instance) {
+			// Recreating the head Pod if the RayCluster created by RayJob is provisioned doesn't help RayJob.
+			//
+			// Case 1: GCS fault tolerance is disabled
+			//
+			// In this case, the worker Pods will be killed by the new head Pod when it is created, so the new Ray job will not be running in
+			// a "provisioned" cluster.
+			//
+			// Case 2: GCS fault tolerance is enabled
+			//
+			// In this case, the worker Pods will not be killed by the new head Pod when it is created, but the submission ID has already been
+			// used by the old Ray job, so the new Ray job will fail.
+			logger.Info(
+				"reconcilePods: Found 0 head Pods for the RayCluster; Skipped head recreation due to ray.io/disable-provisioned-head-restart",
+				"rayCluster", instance.Name,
+			)
+			return nil
+		}
 		// Create head Pod if it does not exist.
 		logger.Info("reconcilePods: Found 0 head Pods; creating a head Pod for the RayCluster.")
-		if err := r.createHeadPod(ctx, *instance); err != nil {
+		if err := r.createHeadPod(ctx, *instance, clusterHash); err != nil {
 			return errstd.Join(utils.ErrFailedCreateHeadPod, err)
 		}
 	} else if len(headPods.Items) > 1 { // This should never happen. This protects against the case that users manually create headpod.
@@ -796,7 +824,7 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			continue
 		}
 		// workerReplicas will store the target number of pods for this worker group.
-		numExpectedWorkerPods := int(utils.GetWorkerGroupDesiredReplicas(ctx, worker))
+		numExpectedWorkerPods := int(utils.GetWorkerGroupDesiredReplicas(worker))
 		logger.Info("reconcilePods", "desired workerReplicas (always adhering to minReplicas/maxReplica)", numExpectedWorkerPods, "worker group", worker.GroupName, "maxReplicas", worker.MaxReplicas, "minReplicas", worker.MinReplicas, "replicas", worker.Replicas)
 
 		workerPods := corev1.PodList{}
@@ -816,19 +844,21 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			continue
 		}
 
+		isRayMultiHostIndexing := worker.NumOfHosts > 1 && features.Enabled(features.RayMultiHostIndexing)
+		if isRayMultiHostIndexing {
+			if err := r.reconcileMultiHostWorkerGroup(ctx, instance, &worker, workerPods.Items); err != nil {
+				return err
+			}
+			// Skip to the next worker as we've already handled multi-host reconciliation.
+			continue
+		}
+
 		// Delete unhealthy worker Pods.
 		deletedWorkers := make(map[string]struct{})
 		deleted := struct{}{}
 		numDeletedUnhealthyWorkerPods := 0
 		for _, workerPod := range workerPods.Items {
 			shouldDelete, reason := shouldDeletePod(workerPod, rayv1.WorkerNode)
-
-			// Check if mTLS is enabled but pod doesn't have mTLS configuration
-			if !shouldDelete && r.isMTLSEnabled(instance) && !podHasMTLSConfiguration(workerPod) {
-				shouldDelete = true
-				reason = fmt.Sprintf("mTLS is enabled but worker Pod %s doesn't have mTLS configuration. Pod needs to be recreated with mTLS volumes and environment variables.", workerPod.Name)
-			}
-
 			logger.Info("reconcilePods", "worker Pod", workerPod.Name, "shouldDelete", shouldDelete, "reason", reason)
 			if shouldDelete {
 				numDeletedUnhealthyWorkerPods++
@@ -890,14 +920,42 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 
 		logger.Info("reconcilePods", "workerReplicas", numExpectedWorkerPods, "NumOfHosts", worker.NumOfHosts, "runningPods", len(runningPods.Items), "diff", diff)
 
+		// Support replica indices for single-host, multi-slice environments.
+		validReplicaIndices := make(map[int]bool)
+		if features.Enabled(features.RayMultiHostIndexing) {
+			for _, pod := range runningPods.Items {
+				if indexStr, ok := pod.Labels[utils.RayWorkerReplicaIndexKey]; ok {
+					if index, err := strconv.Atoi(indexStr); err == nil {
+						validReplicaIndices[index] = true
+					}
+				}
+			}
+			logger.Info("reconcilePods: found existing replica indices", "group", worker.GroupName, "indices", validReplicaIndices)
+		}
 		if diff > 0 {
 			// pods need to be added
 			logger.Info("reconcilePods", "Number workers to add", diff, "Worker group", worker.GroupName)
-			// create all workers of this group
-			for i := 0; i < diff; i++ {
-				logger.Info("reconcilePods", "creating worker for group", worker.GroupName, "index", i, "total", diff)
-				if err := r.createWorkerPod(ctx, *instance, *worker.DeepCopy()); err != nil {
-					return errstd.Join(utils.ErrFailedCreateWorkerPod, err)
+			if features.Enabled(features.RayMultiHostIndexing) {
+				newReplicaIndex := 0
+				// create all workers of this group
+				for i := range diff {
+					// Find the next available replica index.
+					for validReplicaIndices[newReplicaIndex] {
+						newReplicaIndex++
+					}
+					validReplicaIndices[newReplicaIndex] = true
+					logger.Info("reconcilePods", "creating worker for group", worker.GroupName, "index", i, "total", diff, "replicaIndex", newReplicaIndex)
+					if err := r.createWorkerPodWithIndex(ctx, *instance, *worker.DeepCopy(), "", newReplicaIndex, 0); err != nil {
+						return errstd.Join(utils.ErrFailedCreateWorkerPod, err)
+					}
+				}
+			} else {
+				// create all workers of this group
+				for i := range diff {
+					logger.Info("reconcilePods", "creating worker for group", worker.GroupName, "index", i, "total", diff)
+					if err := r.createWorkerPod(ctx, *instance, *worker.DeepCopy()); err != nil {
+						return errstd.Join(utils.ErrFailedCreateWorkerPod, err)
+					}
 				}
 			}
 		} else if diff == 0 {
@@ -925,7 +983,7 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 				// diff < 0 means that we need to delete some Pods to meet the desired number of replicas.
 				randomlyRemovedWorkers := -diff
 				logger.Info("reconcilePods", "Number workers to delete randomly", randomlyRemovedWorkers, "Worker group", worker.GroupName)
-				for i := 0; i < randomlyRemovedWorkers; i++ {
+				for i := range randomlyRemovedWorkers {
 					randomPodToDelete := runningPods.Items[i]
 					logger.Info("Randomly deleting Pod", "progress", fmt.Sprintf("%d / %d", i+1, randomlyRemovedWorkers), "with name", randomPodToDelete.Name)
 					if err := r.Delete(ctx, &randomPodToDelete); err != nil {
@@ -944,6 +1002,242 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 		}
 	}
 	return nil
+}
+
+// deletePods is a helper function to handle the deletion of a list of Pods, setting scale expectations
+// and recording events.
+func (r *RayClusterReconciler) deletePods(ctx context.Context, instance *rayv1.RayCluster, podsToDelete []corev1.Pod, groupName string, reason string) error {
+	for i := range podsToDelete {
+		pod := podsToDelete[i]
+		if err := r.Delete(ctx, &pod); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.FailedToDeleteWorkerPod),
+				"Failed deleting worker Pod %s/%s for group %s; Pod status: %s; Pod restart policy: %s; Ray container terminated status: %v, %v",
+				pod.Namespace, pod.Name, groupName, pod.Status.Phase, pod.Spec.RestartPolicy, getRayContainerStateTerminated(pod), err)
+			return errstd.Join(utils.ErrFailedDeleteWorkerPod, err)
+		}
+		r.rayClusterScaleExpectation.ExpectScalePod(pod.Namespace, instance.Name, groupName, pod.Name, expectations.Delete)
+		r.Recorder.Eventf(instance, corev1.EventTypeNormal, string(utils.DeletedWorkerPod),
+			"Deleted worker Pod %s/%s for group %s: %s", pod.Namespace, pod.Name, groupName, reason)
+	}
+	return nil
+}
+
+// reconcileMultiHostWorkerGroup handles reconciliation and Pod deletion for worker groups with NumOfHosts > 1 when
+// the RayMultihostIndexing feature is enabled. This function is responsible for:
+// 1. Deleting incomplete or unhealthy multi-host groups atomically.
+// 2. Explicit deletes of entire multi-host groups for the autoscaler.
+// 3. Scale up/down of multi-host groups.
+func (r *RayClusterReconciler) reconcileMultiHostWorkerGroup(ctx context.Context, instance *rayv1.RayCluster, worker *rayv1.WorkerGroupSpec, workerPods []corev1.Pod) error {
+	logger := ctrl.LoggerFrom(ctx)
+
+	// 1. Group existing pods by ray.io/worker-group-replica-index.
+	replicaMap := make(map[string][]corev1.Pod)
+	for _, pod := range workerPods {
+		if replicaName, ok := pod.Labels[utils.RayWorkerReplicaNameKey]; ok {
+			replicaMap[replicaName] = append(replicaMap[replicaName], pod)
+		}
+	}
+
+	// 2. Clean up incomplete replica groups with deleted Pods caused by external deletion.
+	for replicaName, podList := range replicaMap {
+		if len(podList) < int(worker.NumOfHosts) {
+			logger.Info("Found incomplete multi-host replica group, deleting all remaining pods to maintain atomicity.", "group", worker.GroupName, "replica", replicaName, "found", len(podList), "expected", worker.NumOfHosts)
+			if err := r.deletePods(ctx, instance, podList, worker.GroupName, "cleanup of incomplete multi-host group"); err != nil {
+				return err
+			}
+			// Requeue to avoid creating new Pods on this reconciliation.
+			return fmt.Errorf("cleaned up incomplete replica group %s, requeueing", replicaName)
+		}
+	}
+
+	// 3. Delete unhealthy replica groups.
+	deletedPods := make(map[string]struct{})
+	for _, pod := range workerPods {
+		if _, alreadyDeleted := deletedPods[pod.Name]; alreadyDeleted {
+			continue
+		}
+		if shouldDelete, reason := shouldDeletePod(pod, rayv1.WorkerNode); shouldDelete {
+			replicaName := pod.Labels[utils.RayWorkerReplicaNameKey]
+			podsToDelete, ok := replicaMap[replicaName]
+			if !ok {
+				continue
+			}
+			logger.Info("Deleting unhealthy replica group.", "group", worker.GroupName, "replica", replicaName, "reason", reason)
+			if err := r.deletePods(ctx, instance, podsToDelete, worker.GroupName, reason); err != nil {
+				return err
+			}
+			// All Pods in the group have been deleted.
+			for _, p := range podsToDelete {
+				deletedPods[p.Name] = struct{}{}
+			}
+		}
+	}
+
+	// 4. Handle explicit deletions from the autoscaler.
+	if len(worker.ScaleStrategy.WorkersToDelete) > 0 {
+		podsToDeleteFromStrategy := make(map[string]corev1.Pod)
+		for _, podName := range worker.ScaleStrategy.WorkersToDelete {
+			for _, pod := range workerPods {
+				if pod.Name == podName {
+					replicaName := pod.Labels[utils.RayWorkerReplicaNameKey]
+					for _, p := range replicaMap[replicaName] {
+						podsToDeleteFromStrategy[p.Name] = p
+					}
+					break
+				}
+			}
+		}
+
+		if len(podsToDeleteFromStrategy) > 0 {
+			logger.Info("removing the pods in the scaleStrategy of", "group", worker.GroupName, "podsToDelete", len(podsToDeleteFromStrategy))
+			var podsToDel []corev1.Pod
+			for _, p := range podsToDeleteFromStrategy {
+				podsToDel = append(podsToDel, p)
+			}
+			if err := r.deletePods(ctx, instance, podsToDel, worker.GroupName, "autoscaler scale-down request"); err != nil {
+				return err
+			}
+			worker.ScaleStrategy.WorkersToDelete = []string{}
+			return fmt.Errorf("deleted %d worker Pods based on ScaleStrategy, requeueing", len(podsToDel))
+		}
+		// Clear WorkersToDelete after deletion.
+		worker.ScaleStrategy.WorkersToDelete = []string{}
+	}
+
+	// 5. Calculate Pod diff for scaling up or down by NumOfHosts.
+
+	validReplicaGroups := make(map[string]struct{})
+	for replicaName, podList := range replicaMap {
+		isHealthyAndComplete := true
+		for _, pod := range podList {
+			if _, isDeleted := deletedPods[pod.Name]; isDeleted {
+				isHealthyAndComplete = false
+				break
+			}
+		}
+		if isHealthyAndComplete {
+			validReplicaGroups[replicaName] = struct{}{}
+		}
+	}
+	numRunningReplicas := len(validReplicaGroups)
+	numExpectedWorkerPods := int(utils.GetWorkerGroupDesiredReplicas(*worker))
+
+	// Ensure that if numExpectedWorkerPods is not a multiple of NumOfHosts, we log an error.
+	if numExpectedWorkerPods%int(worker.NumOfHosts) != 0 {
+		return fmt.Errorf("desired worker pods (%d) is not a multiple of NumOfHosts (%d) for group %s",
+			numExpectedWorkerPods, worker.NumOfHosts, worker.GroupName)
+	}
+	numExpectedReplicas := numExpectedWorkerPods / int(worker.NumOfHosts)
+	replicasToCreate := numExpectedReplicas - numRunningReplicas
+
+	// Track full replica groups to determine next replica index to assign to.
+	validReplicaIndices := make(map[int]bool)
+	for replicaName := range validReplicaGroups {
+		if len(replicaMap[replicaName]) > 0 {
+			pod := replicaMap[replicaName][0]
+			if indexStr, ok := pod.Labels[utils.RayWorkerReplicaIndexKey]; ok {
+				if index, err := strconv.Atoi(indexStr); err == nil {
+					validReplicaIndices[index] = true
+				}
+			}
+		}
+	}
+	logger.Info("Reconciling multi-host group", "group", worker.GroupName, "expectedReplicas", numExpectedReplicas, "runningReplicas", numRunningReplicas, "replicasToCreate", replicasToCreate, "inUseIndices", validReplicaIndices)
+	if replicasToCreate > 0 {
+		logger.Info("Scaling up multi-host group", "group", worker.GroupName, "replicasToCreate", replicasToCreate)
+		newReplicaIndex := 0 // Find the next available index starting from 0
+		for range replicasToCreate {
+			for validReplicaIndices[newReplicaIndex] {
+				newReplicaIndex++
+			}
+			validReplicaIndices[newReplicaIndex] = true
+			replicaName := utils.GenerateRayWorkerReplicaGroupName(worker.GroupName)
+			logger.Info("Creating new replica group", "group", worker.GroupName, "replicaName", replicaName, "replicaIndex", newReplicaIndex)
+			for j := 0; j < int(worker.NumOfHosts); j++ {
+				if err := r.createWorkerPodWithIndex(ctx, *instance, *worker.DeepCopy(), replicaName, newReplicaIndex, j); err != nil {
+					return errstd.Join(utils.ErrFailedCreateWorkerPod, err)
+				}
+			}
+		}
+	} else if replicasToCreate < 0 {
+		// Scale down NumOfHost workers per replica.
+		enableInTreeAutoscaling := utils.IsAutoscalingEnabled(&instance.Spec)
+		enableRandomPodDelete := false
+		if enableInTreeAutoscaling {
+			if s := os.Getenv(utils.ENABLE_RANDOM_POD_DELETE); strings.ToLower(s) == "true" {
+				enableRandomPodDelete = true
+			}
+		}
+		if !enableInTreeAutoscaling || enableRandomPodDelete {
+			replicasToRemove := -replicasToCreate
+			logger.Info("Scaling down multi-host group by randomly deleting replica groups", "group", worker.GroupName, "groupsToRemove", replicasToRemove)
+			replicasDeleted := 0
+			// Iterate over validReplicaGroups which contains the IDs of replica groups with NumOfHosts running Pods.
+			for replicaID := range validReplicaGroups {
+				if replicasDeleted >= replicasToRemove {
+					break
+				}
+				podList := replicaMap[replicaID]
+				if err := r.deletePods(ctx, instance, podList, worker.GroupName, "scaling down"); err != nil {
+					return err
+				}
+				replicasDeleted++
+			}
+		} else {
+			logger.Info("Random replica group deletion is disabled for the cluster. The only decision-maker for Pod deletions is the Ray Autoscaler.")
+		}
+	}
+
+	return nil
+}
+
+func shouldSkipHeadPodRestart(instance *rayv1.RayCluster) bool {
+	return instance.Annotations[utils.DisableProvisionedHeadRestartAnnotationKey] == "true"
+}
+
+// shouldRecreatePodsForUpgrade checks if any pods need to be recreated based on RayClusterSpec changes
+func (r *RayClusterReconciler) shouldRecreatePodsForUpgrade(ctx context.Context, instance *rayv1.RayCluster) bool {
+	logger := ctrl.LoggerFrom(ctx)
+	if instance.Spec.UpgradeStrategy == nil || instance.Spec.UpgradeStrategy.Type == nil || *instance.Spec.UpgradeStrategy.Type != rayv1.RayClusterRecreate {
+		return false
+	}
+
+	expectedClusterHash, err := utils.GenerateHashWithoutReplicasAndWorkersToDelete(instance.Spec)
+	if err != nil {
+		logger.Error(err, "Failed to generate cluster spec hash for Recreate upgradeStrategy, skipping comparison")
+		return false
+	}
+
+	headPods := corev1.PodList{}
+	if err := r.List(ctx, &headPods, common.RayClusterHeadPodsAssociationOptions(instance).ToListOptions()...); err != nil {
+		logger.Error(err, "Failed to list head pods for upgrade check")
+		return false
+	}
+
+	// If the KubeRay version has changed, skip recreation to avoid unnecessary pod recreation
+	if len(headPods.Items) > 0 {
+		headPod := headPods.Items[0]
+		podVersion := headPod.Annotations[utils.KubeRayVersion]
+		// If the KubeRay version has changed, update the head pod to get the cluster hash and new KubeRay version
+		if podVersion != "" && podVersion != utils.KUBERAY_VERSION {
+			logger.Info("KubeRay version has changed, skipping pod recreation", "rayCluster", instance.Name)
+			headPod.Annotations[utils.UpgradeStrategyRecreateHashKey] = expectedClusterHash
+			headPod.Annotations[utils.KubeRayVersion] = utils.KUBERAY_VERSION
+			if err := r.Update(ctx, &headPod); err != nil {
+				logger.Error(err, "Failed to update head pod annotations after KUBERAY_VERSION change", "pod", headPod.Name)
+			}
+			return false
+		}
+		actualHash := headPod.Annotations[utils.UpgradeStrategyRecreateHashKey]
+		if actualHash != "" && actualHash != expectedClusterHash {
+			logger.Info("RayCluster spec has changed, will recreate all pods", "rayCluster", instance.Name)
+			return true
+		}
+	}
+	return false
 }
 
 // shouldDeletePod returns whether the Pod should be deleted and the reason
@@ -1006,6 +1300,31 @@ func shouldDeletePod(pod corev1.Pod, nodeType rayv1.RayNodeType) (bool, string) 
 	return false, reason
 }
 
+func podHasMTLSConfiguration(pod corev1.Pod) bool {
+	hasMTLSVolume := false
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == "ray-tls-vol" {
+			hasMTLSVolume = true
+			break
+		}
+	}
+
+	if !hasMTLSVolume {
+		return false
+	}
+
+	if len(pod.Spec.Containers) > utils.RayContainerIndex {
+		rayContainer := pod.Spec.Containers[utils.RayContainerIndex]
+		for _, env := range rayContainer.Env {
+			if env.Name == "RAY_USE_TLS" && env.Value == "1" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // `ContainerStatuses` does not guarantee the order of the containers. Therefore, we need to find the Ray
 // container's status by name. See the following links for more details:
 // (1) https://discuss.kubernetes.io/t/pod-spec-containers-and-pod-status-containerstatuses-can-have-a-different-order-why/25273
@@ -1021,34 +1340,6 @@ func getRayContainerStateTerminated(pod corev1.Pod) *corev1.ContainerStateTermin
 	// typically arises during testing (`raycluster_controller_test.go`) as `envtest` lacks
 	// a Pod controller, preventing automatic Pod status updates.
 	return nil
-}
-
-// podHasMTLSConfiguration checks if a pod has been configured with mTLS volumes and environment variables
-func podHasMTLSConfiguration(pod corev1.Pod) bool {
-	// Check if the pod has the ray-tls-vol volume mount
-	hasMTLSVolume := false
-	for _, volume := range pod.Spec.Volumes {
-		if volume.Name == "ray-tls-vol" {
-			hasMTLSVolume = true
-			break
-		}
-	}
-
-	if !hasMTLSVolume {
-		return false
-	}
-
-	// Check if the Ray container has the RAY_USE_TLS environment variable
-	if len(pod.Spec.Containers) > utils.RayContainerIndex {
-		rayContainer := pod.Spec.Containers[utils.RayContainerIndex]
-		for _, env := range rayContainer.Env {
-			if env.Name == "RAY_USE_TLS" && env.Value == "1" {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func (r *RayClusterReconciler) createHeadIngress(ctx context.Context, ingress *networkingv1.Ingress, instance *rayv1.RayCluster) error {
@@ -1108,92 +1399,23 @@ func (r *RayClusterReconciler) createService(ctx context.Context, svc *corev1.Se
 	return nil
 }
 
-func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1.RayCluster) error {
+func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1.RayCluster, clusterHash string) error {
 	logger := ctrl.LoggerFrom(ctx)
-
-	// Check if authentication is enabled and if the required resources are ready
-	// This prevents a race condition where the pod is created before the AuthenticationController
-	// has created the required resources (ServiceAccount, HTTPRoute, etc.)
-	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
-	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
-	if shouldEnableAuth {
-		// Use feature gate to enable new condition-based coordination
-		if features.Enabled(features.RayClusterStatusConditions) {
-			// NEW PATTERN: Check AuthenticationReady condition
-			authReadyCondition := meta.FindStatusCondition(instance.Status.Conditions,
-				string(rayv1.AuthenticationReady))
-
-			// Check if condition exists, is True, and is fresh (observedGeneration matches current generation)
-			// The observedGeneration check prevents acting on stale conditions from before the current spec change
-			conditionStale := authReadyCondition != nil && authReadyCondition.ObservedGeneration != instance.Generation
-			conditionNotReady := authReadyCondition == nil || authReadyCondition.Status != metav1.ConditionTrue
-
-			if conditionNotReady || conditionStale {
-				reason := utils.AuthenticationPending
-				message := "Waiting for AuthenticationController to create authentication resources"
-				if authReadyCondition != nil {
-					reason = authReadyCondition.Reason
-					message = authReadyCondition.Message
-					if conditionStale {
-						message = fmt.Sprintf("Condition is stale (observedGeneration=%d, currentGeneration=%d): %s",
-							authReadyCondition.ObservedGeneration, instance.Generation, message)
-					}
-				}
-
-				var observedGen int64
-				if authReadyCondition != nil {
-					observedGen = authReadyCondition.ObservedGeneration
-				}
-				logger.Info("Waiting for authentication resources to be ready",
-					"condition", authReadyCondition,
-					"reason", reason,
-					"conditionStale", conditionStale,
-					"observedGeneration", observedGen,
-					"currentGeneration", instance.Generation,
-					"authMode", authMode)
-				r.Recorder.Eventf(&instance, corev1.EventTypeNormal,
-					string(utils.WaitingForAuthentication),
-					"Waiting for authentication resources: %s", message)
-
-				return fmt.Errorf("waiting for AuthenticationReady condition: %s", message)
-			}
-
-			logger.Info("AuthenticationReady condition is True and fresh, proceeding with pod creation",
-				"reason", authReadyCondition.Reason,
-				"observedGeneration", authReadyCondition.ObservedGeneration,
-				"authMode", authMode)
-		} else {
-			// LEGACY PATTERN: Check ServiceAccount existence directly (backward compatibility)
-			namer := utils.NewResourceNamer(&instance)
-			saName := namer.ServiceAccountName(authMode)
-			sa := &corev1.ServiceAccount{}
-			if err := r.Get(ctx, client.ObjectKey{Name: saName, Namespace: instance.Namespace}, sa); err != nil {
-				if errors.IsNotFound(err) {
-					logger.Info("Waiting for AuthenticationController to create ServiceAccount, will retry",
-						"serviceAccount", saName,
-						"namespace", instance.Namespace,
-						"authMode", authMode)
-					r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.WaitingForServiceAccount),
-						"Waiting for ServiceAccount %s to be created by AuthenticationController", saName)
-					// Return error to trigger retry - the AuthenticationController will create the SA
-					return fmt.Errorf("waiting for ServiceAccount %s to be created for authentication", saName)
-				}
-				// Other errors (not NotFound) should be returned
-				return fmt.Errorf("failed to check ServiceAccount %s: %w", saName, err)
-			}
-			logger.Info("ServiceAccount exists, proceeding with pod creation",
-				"serviceAccount", saName,
-				"namespace", instance.Namespace)
-		}
-	}
 
 	// build the pod then create it
 	pod := r.buildHeadPod(ctx, instance)
+
+	// Set RayClusterUpgradeStrategyHashKey and KubeRayVersion annotations
+	if clusterHash != "" {
+		pod.Annotations[utils.UpgradeStrategyRecreateHashKey] = clusterHash
+		pod.Annotations[utils.KubeRayVersion] = utils.KUBERAY_VERSION
+	}
+
 	// check if the batch scheduler integration is enabled
 	// call the scheduler plugin if so
-	if r.BatchSchedulerMgr != nil {
-		if scheduler, err := r.BatchSchedulerMgr.GetSchedulerForCluster(); err == nil {
-			scheduler.AddMetadataToPod(ctx, &instance, utils.RayNodeHeadGroupLabelValue, &pod)
+	if r.options.BatchSchedulerManager != nil {
+		if scheduler, err := r.options.BatchSchedulerManager.GetScheduler(); err == nil {
+			scheduler.AddMetadataToChildResource(ctx, &instance, &pod, utils.RayNodeHeadGroupLabelValue)
 		} else {
 			return err
 		}
@@ -1211,11 +1433,36 @@ func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1
 
 func (r *RayClusterReconciler) createWorkerPod(ctx context.Context, instance rayv1.RayCluster, worker rayv1.WorkerGroupSpec) error {
 	logger := ctrl.LoggerFrom(ctx)
+
 	// build the pod then create it
-	pod := r.buildWorkerPod(ctx, instance, worker)
-	if r.BatchSchedulerMgr != nil {
-		if scheduler, err := r.BatchSchedulerMgr.GetSchedulerForCluster(); err == nil {
-			scheduler.AddMetadataToPod(ctx, &instance, worker.GroupName, &pod)
+	pod := r.buildWorkerPod(ctx, instance, worker, "", 0, 0)
+	if r.options.BatchSchedulerManager != nil {
+		if scheduler, err := r.options.BatchSchedulerManager.GetScheduler(); err == nil {
+			scheduler.AddMetadataToChildResource(ctx, &instance, &pod, worker.GroupName)
+		} else {
+			return err
+		}
+	}
+
+	replica := pod
+	if err := r.Create(ctx, &replica); err != nil {
+		r.Recorder.Eventf(&instance, corev1.EventTypeWarning, string(utils.FailedToCreateWorkerPod), "Failed to create worker Pod for the cluster %s/%s, %v", instance.Namespace, instance.Name, err)
+		return err
+	}
+	r.rayClusterScaleExpectation.ExpectScalePod(replica.Namespace, instance.Name, worker.GroupName, replica.Name, expectations.Create)
+	logger.Info("Created worker Pod for RayCluster", "name", replica.Name)
+	r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.CreatedWorkerPod), "Created worker Pod %s/%s", replica.Namespace, replica.Name)
+	return nil
+}
+
+func (r *RayClusterReconciler) createWorkerPodWithIndex(ctx context.Context, instance rayv1.RayCluster, worker rayv1.WorkerGroupSpec, replicaGrpName string, replicaIndex int, hostIndex int) error {
+	logger := ctrl.LoggerFrom(ctx)
+
+	// build the pod then create it
+	pod := r.buildWorkerPod(ctx, instance, worker, replicaGrpName, replicaIndex, hostIndex)
+	if r.options.BatchSchedulerManager != nil {
+		if scheduler, err := r.options.BatchSchedulerManager.GetScheduler(); err == nil {
+			scheduler.AddMetadataToChildResource(ctx, &instance, &pod, worker.GroupName)
 		} else {
 			return err
 		}
@@ -1235,61 +1482,19 @@ func (r *RayClusterReconciler) createWorkerPod(ctx context.Context, instance ray
 // Build head instance pod(s).
 func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.RayCluster) corev1.Pod {
 	logger := ctrl.LoggerFrom(ctx)
-	podName := utils.PodName(instance.Name, rayv1.HeadNode, true)
+	podName := utils.PodName(instance.Name, rayv1.HeadNode, !utils.IsDeterministicHeadPodNameEnabled())
 	fqdnRayIP := utils.GenerateFQDNServiceName(ctx, instance, instance.Namespace) // Fully Qualified Domain Name
 
 	// The Ray head port used by workers to connect to the cluster (GCS server port for Ray >= 1.11.0, Redis port for older Ray.)
 	headPort := common.GetHeadPort(instance.Spec.HeadGroupSpec.RayStartParams)
 	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance.Spec)
-	podConf := common.DefaultHeadPodTemplate(ctx, instance, instance.Spec.HeadGroupSpec, podName, headPort, fqdnRayIP)
+	podConf := common.DefaultHeadPodTemplate(ctx, instance, instance.Spec.HeadGroupSpec, podName, headPort)
 	if len(r.options.HeadSidecarContainers) > 0 {
 		podConf.Spec.Containers = append(podConf.Spec.Containers, r.options.HeadSidecarContainers...)
 	}
-
-	// Configure mTLS if enabled
-	if r.isMTLSEnabled(&instance) {
-		logger.Info("mTLS is enabled, configuring mTLS for head pod")
-		r.configureMTLSForPod(&podConf, instance)
-	}
-
-	// Detect authentication mode and inject appropriate sidecar
-	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
-	logger.Info("Detected authentication mode for pod creation", "mode", authMode, "cluster", instance.Name)
-
-	namer := utils.NewResourceNamer(&instance)
-
-	// Both OAuth and OIDC modes now use the same OIDC sidecar (kube-rbac-proxy)
-	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
-	if shouldEnableAuth {
-		logger.Info("Injecting OIDC proxy sidecar (kube-rbac-proxy)", "cluster", instance.Name, "mode", authMode)
-
-		result := utils.InjectAuthSidecar(
-			&podConf.Spec,
-			&instance,
-			authMode,
-			GetOIDCProxySidecar,
-			GetOIDCProxyVolumes,
-			namer.ServiceAccountName(authMode),
-		)
-
-		if result.Injected {
-			logger.Info("Authentication sidecar injected successfully",
-				"cluster", instance.Name,
-				"authType", result.AuthType,
-				"serviceAccount", result.ServiceAccountName,
-				"containerCount", result.ContainerCount)
-		}
-	}
-
 	logger.Info("head pod labels", "labels", podConf.Labels)
 	creatorCRDType := getCreatorCRDType(instance)
-	pod := common.BuildPod(ctx, podConf, rayv1.HeadNode, instance.Spec.HeadGroupSpec.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP)
-	if r.isMTLSEnabled(&instance) {
-		// With mTLS, --node-ip-address is the head service FQDN (see setMissingRayStartParams).
-		// Inject loopback RAY_ADDRESS after BuildPod so ray-head and autoscaler connect to GCS
-		// via 127.0.0.1, avoiding TLS SNI failures when using the pod IP.
-		r.injectMTLSLoopbackRayAddress(&pod, headPort)
-	}
+	pod := common.BuildPod(ctx, podConf, rayv1.HeadNode, instance.Spec.HeadGroupSpec.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP, r.options.DefaultContainerEnvs, instance.Spec.RayVersion)
 	// Set raycluster instance as the owner and controller
 	if err := controllerutil.SetControllerReference(&instance, &pod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference for raycluster pod")
@@ -1303,7 +1508,7 @@ func getCreatorCRDType(instance rayv1.RayCluster) utils.CRDType {
 }
 
 // Build worker instance pods.
-func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv1.RayCluster, worker rayv1.WorkerGroupSpec) corev1.Pod {
+func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv1.RayCluster, worker rayv1.WorkerGroupSpec, replicaGrpName string, replicaIndex int, hostIndex int) corev1.Pod {
 	logger := ctrl.LoggerFrom(ctx)
 	podName := utils.PodName(fmt.Sprintf("%s-%s", instance.Name, worker.GroupName), rayv1.WorkerNode, true)
 	fqdnRayIP := utils.GenerateFQDNServiceName(ctx, instance, instance.Namespace) // Fully Qualified Domain Name
@@ -1311,253 +1516,18 @@ func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv
 	// The Ray head port used by workers to connect to the cluster (GCS server port for Ray >= 1.11.0, Redis port for older Ray.)
 	headPort := common.GetHeadPort(instance.Spec.HeadGroupSpec.RayStartParams)
 	autoscalingEnabled := utils.IsAutoscalingEnabled(&instance.Spec)
-	podTemplateSpec := common.DefaultWorkerPodTemplate(ctx, instance, worker, podName, fqdnRayIP, headPort)
+	podTemplateSpec := common.DefaultWorkerPodTemplate(ctx, instance, worker, podName, fqdnRayIP, headPort, replicaGrpName, replicaIndex, hostIndex)
 	if len(r.options.WorkerSidecarContainers) > 0 {
 		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers, r.options.WorkerSidecarContainers...)
 	}
-
-	// Configure mTLS if enabled
-	if r.isMTLSEnabled(&instance) {
-		logger.Info("mTLS is enabled, configuring mTLS for worker pod")
-		r.configureMTLSForPod(&podTemplateSpec, instance)
-	}
-
 	creatorCRDType := getCreatorCRDType(instance)
-	pod := common.BuildPod(ctx, podTemplateSpec, rayv1.WorkerNode, worker.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP)
+	pod := common.BuildPod(ctx, podTemplateSpec, rayv1.WorkerNode, worker.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP, r.options.DefaultContainerEnvs, instance.Spec.RayVersion)
 	// Set raycluster instance as the owner and controller
 	if err := controllerutil.SetControllerReference(&instance, &pod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference for raycluster pod")
 	}
 
 	return pod
-}
-
-// isMTLSEnabled checks if mTLS is enabled for this RayCluster via annotation
-func (r *RayClusterReconciler) isMTLSEnabled(instance *rayv1.RayCluster) bool {
-	// Check if the cluster explicitly enables or disables mTLS via annotation
-	if instance.Annotations != nil {
-		if value, exists := instance.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey]; exists {
-			return value == "true"
-		}
-	}
-	// Default to disabled if no annotation is set
-	return false
-}
-
-// configureMTLSForPod configures mTLS settings for a pod template if mTLS is enabled
-func (r *RayClusterReconciler) configureMTLSForPod(podTemplate *corev1.PodTemplateSpec, instance rayv1.RayCluster) {
-	// Determine the appropriate secret name based on node type
-	// We can determine this from the pod labels or container name
-	var secretName string
-	var isWorker bool
-	if podTemplate.Labels != nil && podTemplate.Labels[utils.RayNodeTypeLabelKey] == string(rayv1.HeadNode) {
-		isWorker = false
-		secretName = fmt.Sprintf("ray-head-secret-%s", instance.Name)
-	} else {
-		isWorker = true
-		secretName = fmt.Sprintf("ray-worker-secret-%s", instance.Name)
-	}
-
-	for i := range podTemplate.Spec.Containers {
-		// Add TLS environment variables
-		r.addTLSEnvironmentVariables(&podTemplate.Spec.Containers[i], isWorker)
-		// Add certificate volume mounts
-		r.addCertVolumeMounts(&podTemplate.Spec.Containers[i])
-	}
-
-	// Add mTLS configuration to init containers as well
-	for i := range podTemplate.Spec.InitContainers {
-		// Add TLS environment variables
-		r.addTLSEnvironmentVariables(&podTemplate.Spec.InitContainers[i], isWorker)
-		// Add certificate volume mounts
-		r.addCertVolumeMounts(&podTemplate.Spec.InitContainers[i])
-	}
-
-	// For head pods, prepend an init container that waits until the TLS certificate
-	// issued by cert-manager includes the pod's actual IP as an IP SAN. Without this,
-	// there is a race condition: cert-manager issues the initial certificate before the
-	// pod IP is known (so only the FQDN DNS SAN is present), and GCS loads this
-	// incomplete certificate at startup. Python clients that connect via the pod IP
-	// (after resolving the FQDN) then fail TLS verification because no IP SAN matches.
-	// Blocking GCS startup until the cert carries the pod's IP SAN eliminates the race.
-	if !isWorker && len(podTemplate.Spec.Containers) > 0 {
-		waitScript := `POD_IP="${MY_POD_IP}"
-CERT="/home/ray/workspace/tls/tls.crt"
-echo "Waiting for TLS cert to include IP SAN for ${POD_IP}..."
-while true; do
-  if openssl x509 -in "${CERT}" -noout -text 2>/dev/null | grep -q "IP Address:${POD_IP}"; then
-    echo "TLS cert now includes IP SAN for ${POD_IP}"
-    exit 0
-  fi
-  echo "IP SAN for ${POD_IP} not yet in cert, retrying in 5s..."
-  sleep 5
-done`
-		waitInitContainer := corev1.Container{
-			Name:  "wait-for-tls-ip-san",
-			Image: podTemplate.Spec.Containers[0].Image,
-			Env: []corev1.EnvVar{
-				{
-					Name: "MY_POD_IP",
-					ValueFrom: &corev1.EnvVarSource{
-						FieldRef: &corev1.ObjectFieldSelector{
-							FieldPath: "status.podIP",
-						},
-					},
-				},
-			},
-			VolumeMounts: []corev1.VolumeMount{
-				{
-					Name:      "ray-tls-vol",
-					MountPath: "/home/ray/workspace/tls",
-					ReadOnly:  true,
-				},
-			},
-			Command: []string{"sh", "-c"},
-			Args:    []string{waitScript},
-		}
-		podTemplate.Spec.InitContainers = append([]corev1.Container{waitInitContainer}, podTemplate.Spec.InitContainers...)
-	}
-
-	// Add CA volumes with proper secret references
-	r.addCAVolumes(&podTemplate.Spec, secretName)
-}
-
-// injectMTLSLoopbackRayAddress sets RAY_ADDRESS=127.0.0.1:port on ray-head and autoscaler.
-// Called only when mTLS is enabled for the RayCluster.
-func (r *RayClusterReconciler) injectMTLSLoopbackRayAddress(pod *corev1.Pod, headPort string) {
-	loopbackAddress := fmt.Sprintf("%s:%s", utils.LOCAL_HOST, headPort)
-	for i := range pod.Spec.Containers {
-		container := &pod.Spec.Containers[i]
-		if i != utils.RayContainerIndex && container.Name != common.AutoscalerContainerName {
-			continue
-		}
-		found := false
-		for j, env := range container.Env {
-			if env.Name == utils.RAY_ADDRESS {
-				container.Env[j].Value = loopbackAddress
-				found = true
-				break
-			}
-		}
-		if !found {
-			container.Env = append(container.Env, corev1.EnvVar{
-				Name:  utils.RAY_ADDRESS,
-				Value: loopbackAddress,
-			})
-		}
-	}
-}
-
-// addTLSEnvironmentVariables adds Ray TLS environment variables to a container
-func (r *RayClusterReconciler) addTLSEnvironmentVariables(container *corev1.Container, isWorker bool) {
-	// Check if this is a worker container by looking at the container name
-
-	if isWorker {
-		// Worker pods need both server and client TLS environment variables
-		tlsEnvVars := []corev1.EnvVar{
-			{Name: "RAY_USE_TLS", Value: "1"},
-			{Name: "RAY_TLS_SERVER_CERT", Value: "/home/ray/workspace/tls/tls.crt"},
-			{Name: "RAY_TLS_SERVER_KEY", Value: "/home/ray/workspace/tls/tls.key"},
-			{Name: "RAY_TLS_CA_CERT", Value: "/home/ray/workspace/tls/ca.crt"},
-		}
-		container.Env = append(container.Env, tlsEnvVars...)
-		return
-	}
-
-	// Head pods need all TLS environment variables (both server and client)
-	tlsEnvVars := []corev1.EnvVar{
-		{
-			Name: "MY_POD_IP",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "status.podIP",
-				},
-			},
-		},
-		{Name: "RAY_USE_TLS", Value: "1"},
-		{Name: "RAY_TLS_SERVER_CERT", Value: "/home/ray/workspace/tls/tls.crt"},
-		{Name: "RAY_TLS_SERVER_KEY", Value: "/home/ray/workspace/tls/tls.key"},
-		{Name: "RAY_TLS_CA_CERT", Value: "/home/ray/workspace/tls/ca.crt"},
-	}
-	container.Env = append(container.Env, tlsEnvVars...)
-}
-
-// checkMTLSSecretsReady verifies that the mTLS certificate secrets exist before creating pods
-func (r *RayClusterReconciler) checkMTLSSecretsReady(ctx context.Context, instance *rayv1.RayCluster) error {
-	headSecretName := fmt.Sprintf("ray-head-secret-%s", instance.Name)
-	workerSecretName := fmt.Sprintf("ray-worker-secret-%s", instance.Name)
-
-	// Check if head secret exists
-	headSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: headSecretName, Namespace: instance.Namespace}, headSecret); err != nil {
-		if errors.IsNotFound(err) {
-			return fmt.Errorf("head certificate secret %s not found", headSecretName)
-		}
-		return fmt.Errorf("failed to get head certificate secret: %w", err)
-	}
-
-	// Check if worker secret exists
-	workerSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: workerSecretName, Namespace: instance.Namespace}, workerSecret); err != nil {
-		if errors.IsNotFound(err) {
-			return fmt.Errorf("worker certificate secret %s not found", workerSecretName)
-		}
-		return fmt.Errorf("failed to get worker certificate secret: %w", err)
-	}
-
-	// Verify the secrets have the required keys
-	if _, ok := headSecret.Data["tls.crt"]; !ok {
-		return fmt.Errorf("head secret missing tls.crt")
-	}
-	if _, ok := headSecret.Data["tls.key"]; !ok {
-		return fmt.Errorf("head secret missing tls.key")
-	}
-	if _, ok := headSecret.Data["ca.crt"]; !ok {
-		return fmt.Errorf("head secret missing ca.crt")
-	}
-
-	if _, ok := workerSecret.Data["tls.crt"]; !ok {
-		return fmt.Errorf("worker secret missing tls.crt")
-	}
-	if _, ok := workerSecret.Data["tls.key"]; !ok {
-		return fmt.Errorf("worker secret missing tls.key")
-	}
-	if _, ok := workerSecret.Data["ca.crt"]; !ok {
-		return fmt.Errorf("worker secret missing ca.crt")
-	}
-
-	return nil
-}
-
-// addCAVolumes adds certificate volumes to a pod spec
-// The secret contains the TLS certificate, private key, and CA certificate
-// cert-manager automatically includes ca.crt in the certificate secret
-func (r *RayClusterReconciler) addCAVolumes(podSpec *corev1.PodSpec, secretName string) {
-	tlsVolumes := []corev1.Volume{
-		{
-			Name: "ray-tls-vol",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: secretName, // Contains tls.crt, tls.key, and ca.crt from cert-manager
-				},
-			},
-		},
-	}
-
-	podSpec.Volumes = append(podSpec.Volumes, tlsVolumes...)
-}
-
-// addCertVolumeMounts adds certificate volume mounts to a container
-func (r *RayClusterReconciler) addCertVolumeMounts(container *corev1.Container) {
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "ray-tls-vol",
-			MountPath: "/home/ray/workspace/tls",
-			ReadOnly:  true,
-		},
-	}
-
-	container.VolumeMounts = append(container.VolumeMounts, volumeMounts...)
 }
 
 func (r *RayClusterReconciler) buildRedisCleanupJob(ctx context.Context, instance rayv1.RayCluster) batchv1.Job {
@@ -1654,9 +1624,10 @@ func (r *RayClusterReconciler) SetupWithManager(mgr ctrl.Manager, reconcileConcu
 			predicate.AnnotationChangedPredicate{},
 		))).
 		Owns(&corev1.Pod{}).
-		Owns(&corev1.Service{})
-	if r.BatchSchedulerMgr != nil {
-		r.BatchSchedulerMgr.ConfigureReconciler(b)
+		Owns(&corev1.Service{}).
+		Owns(&corev1.Secret{})
+	if r.options.BatchSchedulerManager != nil {
+		r.options.BatchSchedulerManager.ConfigureReconciler(b)
 	}
 
 	return b.
@@ -1710,7 +1681,7 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 
 	newInstance.Status.ReadyWorkerReplicas = utils.CalculateReadyReplicas(runtimePods)
 	newInstance.Status.AvailableWorkerReplicas = utils.CalculateAvailableReplicas(runtimePods)
-	newInstance.Status.DesiredWorkerReplicas = utils.CalculateDesiredReplicas(ctx, newInstance)
+	newInstance.Status.DesiredWorkerReplicas = utils.CalculateDesiredReplicas(newInstance)
 	newInstance.Status.MinWorkerReplicas = utils.CalculateMinReplicas(newInstance)
 	newInstance.Status.MaxWorkerReplicas = utils.CalculateMaxReplicas(newInstance)
 
@@ -1767,7 +1738,8 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 			}
 		}
 
-		if suspendStatus == rayv1.RayClusterSuspending {
+		switch suspendStatus {
+		case rayv1.RayClusterSuspending:
 			if len(runtimePods.Items) == 0 {
 				meta.SetStatusCondition(&newInstance.Status.Conditions, metav1.Condition{
 					Type:    string(rayv1.RayClusterProvisioned),
@@ -1786,7 +1758,7 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 					Status: metav1.ConditionTrue,
 				})
 			}
-		} else if suspendStatus == rayv1.RayClusterSuspended {
+		case rayv1.RayClusterSuspended:
 			if instance.Spec.Suspend != nil && !*instance.Spec.Suspend {
 				meta.SetStatusCondition(&newInstance.Status.Conditions, metav1.Condition{
 					Type:   string(rayv1.RayClusterSuspended),
@@ -1794,7 +1766,7 @@ func (r *RayClusterReconciler) calculateStatus(ctx context.Context, instance *ra
 					Status: metav1.ConditionFalse,
 				})
 			}
-		} else {
+		default:
 			meta.SetStatusCondition(&newInstance.Status.Conditions, metav1.Condition{
 				Type:   string(rayv1.RayClusterSuspended),
 				Reason: string(rayv1.RayClusterSuspended),
@@ -2056,14 +2028,14 @@ func (r *RayClusterReconciler) reconcileAutoscalerRoleBinding(ctx context.Contex
 		if err := r.Create(ctx, roleBinding); err != nil {
 			if errors.IsAlreadyExists(err) {
 				logger.Info("role binding already exist, no need to create")
-			} else {
-				r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.FailedToCreateRoleBinding), "Failed creating role binding %s/%s, %v", roleBinding.Namespace, roleBinding.Name, err)
-				return err
+				return nil
 			}
-		} else {
-			logger.Info("Created role binding for Ray Autoscaler", "name", roleBinding.Name)
-			r.Recorder.Eventf(instance, corev1.EventTypeNormal, string(utils.CreatedRoleBinding), "Created role binding %s/%s", roleBinding.Namespace, roleBinding.Name)
+			r.Recorder.Eventf(instance, corev1.EventTypeWarning, string(utils.FailedToCreateRoleBinding), "Failed creating role binding %s/%s, %v", roleBinding.Namespace, roleBinding.Name, err)
+			return err
 		}
+		logger.Info("Created role binding for Ray Autoscaler", "name", roleBinding.Name)
+		r.Recorder.Eventf(instance, corev1.EventTypeNormal, string(utils.CreatedRoleBinding), "Created role binding %s/%s", roleBinding.Namespace, roleBinding.Name)
+		return nil
 	}
 
 	return nil
@@ -2073,7 +2045,7 @@ func (r *RayClusterReconciler) reconcileAutoscalerRoleBinding(ctx context.Contex
 // We rely on the returning bool to requeue the reconciliation for atomic operations, such as suspending a RayCluster.
 func (r *RayClusterReconciler) updateRayClusterStatus(ctx context.Context, originalRayClusterInstance, newInstance *rayv1.RayCluster) (bool, error) {
 	logger := ctrl.LoggerFrom(ctx)
-	inconsistent := r.inconsistentRayClusterStatus(ctx, originalRayClusterInstance.Status, newInstance.Status)
+	inconsistent := utils.InconsistentRayClusterStatus(originalRayClusterInstance.Status, newInstance.Status)
 	if !inconsistent {
 		return inconsistent, nil
 	}
@@ -2082,25 +2054,32 @@ func (r *RayClusterReconciler) updateRayClusterStatus(ctx context.Context, origi
 	if err != nil {
 		logger.Info("Error updating status", "name", originalRayClusterInstance.Name, "error", err, "RayCluster", newInstance)
 	} else {
-		emitRayClusterMetrics(r.options.RayClusterMetricsManager, newInstance.Name, newInstance.Namespace, originalRayClusterInstance.Status, newInstance.Status, newInstance.CreationTimestamp.Time)
+		emitRayClusterMetrics(r.options.RayClusterMetricsManager, newInstance.Name, newInstance.Namespace, newInstance.UID, originalRayClusterInstance.Status, newInstance.Status, newInstance.CreationTimestamp.Time)
 	}
 
 	return inconsistent, err
 }
 
-func emitRayClusterMetrics(rayClusterMetricsManager *metrics.RayClusterMetricsManager, clusterName, namespace string, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
+func emitRayClusterMetrics(rayClusterMetricsManager *metrics.RayClusterMetricsManager, clusterName, namespace string, clusterUID types.UID, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
 	if rayClusterMetricsManager == nil {
 		return
 	}
-	emitRayClusterProvisionedDuration(rayClusterMetricsManager, clusterName, namespace, oldStatus, newStatus, creationTimestamp)
+	emitRayClusterProvisionedDuration(rayClusterMetricsManager, clusterName, namespace, clusterUID, oldStatus, newStatus, creationTimestamp)
 }
 
-func emitRayClusterProvisionedDuration(RayClusterMetricsObserver metrics.RayClusterMetricsObserver, clusterName, namespace string, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
+func emitRayClusterProvisionedDuration(RayClusterMetricsObserver metrics.RayClusterMetricsObserver, clusterName, namespace string, clusterUID types.UID, oldStatus, newStatus rayv1.RayClusterStatus, creationTimestamp time.Time) {
 	// Emit kuberay_cluster_provisioned_duration_seconds when a RayCluster's RayClusterProvisioned status transitions from false (or unset) to true
 	if !meta.IsStatusConditionTrue(oldStatus.Conditions, string(rayv1.RayClusterProvisioned)) &&
 		meta.IsStatusConditionTrue(newStatus.Conditions, string(rayv1.RayClusterProvisioned)) {
-		RayClusterMetricsObserver.ObserveRayClusterProvisionedDuration(clusterName, namespace, time.Since(creationTimestamp).Seconds())
+		RayClusterMetricsObserver.ObserveRayClusterProvisionedDuration(clusterName, namespace, clusterUID, time.Since(creationTimestamp).Seconds())
 	}
+}
+
+func cleanUpRayClusterMetrics(rayClusterMetricsManager *metrics.RayClusterMetricsManager, clusterName, namespace string) {
+	if rayClusterMetricsManager == nil {
+		return
+	}
+	rayClusterMetricsManager.DeleteRayClusterMetrics(clusterName, namespace)
 }
 
 // sumGPUs sums the GPUs in the given resource list.
@@ -2108,7 +2087,7 @@ func sumGPUs(resources map[corev1.ResourceName]resource.Quantity) resource.Quant
 	totalGPUs := resource.Quantity{}
 
 	for key, val := range resources {
-		if strings.HasSuffix(string(key), "gpu") && !val.IsZero() {
+		if utils.IsGPUResourceKey(string(key)) && !val.IsZero() {
 			totalGPUs.Add(val)
 		}
 	}

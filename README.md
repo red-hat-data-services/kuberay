@@ -2,6 +2,7 @@
 # KubeRay
 
 [![Build Status](https://github.com/ray-project/kuberay/workflows/Go-build-and-test/badge.svg)](https://github.com/ray-project/kuberay/actions)
+[![Release](https://img.shields.io/github/v/release/ray-project/kuberay)](https://github.com/ray-project/kuberay/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ray-project/kuberay)](https://goreportcard.com/report/github.com/ray-project/kuberay)
 
 KubeRay is a powerful, open-source Kubernetes operator that simplifies the deployment and management of [Ray](https://github.com/ray-project/ray) applications on Kubernetes. It offers several key components:
@@ -21,10 +22,10 @@ common workflows when deploying Ray on Kubernetes. If you aren’t familiar with
 plugin simplifies running Ray on Kubernetes. See [kubectl-plugin](https://docs.ray.io/en/latest/cluster/kubernetes/user-guides/kubectl-plugin.html#kubectl-plugin) for more details.
 
 * **KubeRay APIServer** (Alpha): It provides a layer of simplified configuration for KubeRay resources. The KubeRay API server is used internally
-by some organizations to back user interfaces for KubeRay resource management.
+by some organizations to back user interfaces for KubeRay resource management. See [KubeRay APIServer V2](https://github.com/ray-project/kuberay/blob/master/apiserversdk/README.md) for more details.
 
 * **KubeRay Dashboard** (Experimental): Starting from KubeRay v1.4.0, we have introduced a new dashboard that enables users to view and manage KubeRay resources.
-While it is not yet production-ready, we welcome your feedback.
+While it is not yet production-ready, we welcome your feedback. See [KubeRay Dashboard](https://docs.ray.io/en/master/cluster/kubernetes/user-guides/kuberay-dashboard.html) for more details.
 
 ## Documentation
 
@@ -89,7 +90,7 @@ Please read our [CONTRIBUTING](CONTRIBUTING.md) guide before making a pull reque
 
 Join [Ray's Slack workspace](https://docs.google.com/forms/d/e/1FAIpQLSfAcoiLCHOguOm8e7Jnn-JJdZaCxPGjgVCvFijHB5PLaQLeig/viewform), and search the following public channels:
 
-* `#kuberay-questions`: This channel aims to help KubeRay users with their questions. The messages will be closely monitored by the Ray and KubeRay maintainers.
+* `#kuberay`: This channel aims to help KubeRay users with their questions. The messages will be closely monitored by the Ray and KubeRay maintainers.
 
 KubeRay contributors are welcome to join the bi-weekly KubeRay community meetings.
 

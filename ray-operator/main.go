@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	// Add cert-manager scheme
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/go-logr/zapr"
 	routev1 "github.com/openshift/api/route/v1"
@@ -29,12 +28,13 @@ import (
 	k8szap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	configapi "github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray"
+	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/metrics"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 	"github.com/ray-project/kuberay/ray-operator/pkg/features"
@@ -54,7 +54,7 @@ func init() {
 	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
-	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(gwv1.Install(scheme))
 	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -76,6 +76,8 @@ func main() {
 	var enableBatchScheduler bool
 	var batchScheduler string
 	var enableMetrics bool
+	var qps float64
+	var burst int
 
 	// TODO: remove flag-based config once Configuration API graduates to v1.
 	flag.StringVar(&metricsAddr, "metrics-addr", configapi.DefaultMetricsAddr, "The address the metric endpoint binds to.")
@@ -101,12 +103,14 @@ func main() {
 	flag.BoolVar(&enableBatchScheduler, "enable-batch-scheduler", false,
 		"(Deprecated) Enable batch scheduler. Currently is volcano, which supports gang scheduler policy. Please use --batch-scheduler instead.")
 	flag.StringVar(&batchScheduler, "batch-scheduler", "",
-		"Batch scheduler name, supported values are volcano and yunikorn.")
+		"Batch scheduler name, supported values are volcano, yunikorn, kai-scheduler.")
 	flag.StringVar(&configFile, "config", "", "Path to structured config file. Flags are ignored if config file is set.")
 	flag.BoolVar(&useKubernetesProxy, "use-kubernetes-proxy", false,
 		"Use Kubernetes proxy subresource when connecting to the Ray Head node.")
 	flag.StringVar(&featureGates, "feature-gates", "", "A set of key=value pairs that describe feature gates. E.g. FeatureOne=true,FeatureTwo=false,...")
 	flag.BoolVar(&enableMetrics, "enable-metrics", false, "Enable the emission of control plane metrics.")
+	flag.Float64Var(&qps, "qps", float64(configapi.DefaultQPS), "The QPS value for the client communicating with the Kubernetes API server.")
+	flag.IntVar(&burst, "burst", configapi.DefaultBurst, "The maximum burst for throttling requests from this client to the Kubernetes API server.")
 
 	opts := k8szap.Options{
 		TimeEncoder: zapcore.ISO8601TimeEncoder,
@@ -137,6 +141,8 @@ func main() {
 		config.UseKubernetesProxy = useKubernetesProxy
 		config.DeleteRayJobAfterJobFinishes = os.Getenv(utils.DELETE_RAYJOB_CR_AFTER_JOB_FINISHES) == "true"
 		config.EnableMetrics = enableMetrics
+		config.QPS = &qps
+		config.Burst = &burst
 	}
 
 	stdoutEncoder, err := newLogEncoder(logStdoutEncoder)
@@ -234,6 +240,8 @@ func main() {
 	setupLog.Info("Setup manager")
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.UserAgent = userAgent
+	restConfig.QPS = float32(*config.QPS)
+	restConfig.Burst = *config.Burst
 	mgr, err := ctrl.NewManager(restConfig, options)
 	exitOnError(err, "unable to start manager")
 
@@ -242,6 +250,7 @@ func main() {
 	var rayClusterMetricsManager *metrics.RayClusterMetricsManager
 	var rayJobMetricsManager *metrics.RayJobMetricsManager
 	var rayServiceMetricsManager *metrics.RayServiceMetricsManager
+	var batchSchedulerManager *batchscheduler.SchedulerManager
 	if config.EnableMetrics {
 		mgrClient := mgr.GetClient()
 		rayClusterMetricsManager = metrics.NewRayClusterMetricsManager(ctx, mgrClient)
@@ -253,34 +262,40 @@ func main() {
 			rayServiceMetricsManager,
 		)
 	}
+
+	batchSchedulerManager, err = batchscheduler.NewSchedulerManager(ctx, config, restConfig, mgr.GetClient())
+	exitOnError(err, "unable to create batch scheduler manager")
+	batchSchedulerManager.AddToScheme(mgr.GetScheme())
+
 	rayClusterOptions := ray.RayClusterReconcilerOptions{
 		HeadSidecarContainers:    config.HeadSidecarContainers,
 		WorkerSidecarContainers:  config.WorkerSidecarContainers,
 		IsOpenShift:              utils.GetClusterType(),
 		RayClusterMetricsManager: rayClusterMetricsManager,
+		BatchSchedulerManager:    batchSchedulerManager,
+		DefaultContainerEnvs:     config.DefaultContainerEnvs,
 	}
-	exitOnError(ray.NewReconciler(ctx, mgr, rayClusterOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
+	exitOnError(ray.NewReconciler(ctx, mgr, rayClusterOptions).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayCluster")
 
 	exitOnError(ray.NewRayServiceReconciler(ctx, mgr, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayService")
 
 	rayJobOptions := ray.RayJobReconcilerOptions{
-		RayJobMetricsManager: rayJobMetricsManager,
+		RayJobMetricsManager:  rayJobMetricsManager,
+		BatchSchedulerManager: batchSchedulerManager,
 	}
 	exitOnError(ray.NewRayJobReconciler(ctx, mgr, rayJobOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayJob")
 
-	// Setup MTLS controller
 	mtlsController := ray.NewRayClusterMTLSController(mgr.GetClient(), mgr.GetScheme(), &config)
 	exitOnError(mtlsController.SetupWithManager(mgr),
 		"unable to create controller", "controller", "RayClusterMTLS")
 
-	// NetworkPolicy controller (always registered, uses annotation-based activation)
 	exitOnError(ray.NewNetworkPolicyController(mgr).SetupWithManager(mgr),
 		"unable to create controller", "controller", "NetworkPolicy")
 	setupLog.Info("NetworkPolicy controller registered (annotation-based activation)")
-	// Setup AuthenticationController
+
 	authController := ray.NewAuthenticationController(mgr, rayClusterOptions)
 	exitOnError(authController.SetupWithManager(mgr),
 		"unable to create controller", "controller", "Authentication")
@@ -288,8 +303,16 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
 		exitOnError(webhooks.SetupRayClusterDefaulterWithManager(mgr),
 			"unable to create webhook", "webhook", "RayCluster-Defaulter")
-		exitOnError(webhooks.SetupRayClusterValidatorWithManager(mgr),
+		exitOnError(webhooks.SetupRayClusterWebhookWithManager(mgr),
 			"unable to create webhook", "webhook", "RayCluster-Validator")
+	}
+
+	if features.Enabled(features.RayCronJob) {
+		setupLog.Info("RayCronJob feature gate is enabled, starting RayCronJob controller")
+		exitOnError(ray.NewRayCronJobReconciler(mgr).SetupWithManager(mgr, config.ReconcileConcurrency),
+			"unable to create controller", "controller", "RayCronJob")
+	} else {
+		setupLog.Info("RayCronJob feature gate is disabled, skipping RayCronJob controller setup")
 	}
 	// +kubebuilder:scaffold:builder
 
@@ -312,7 +335,7 @@ func cacheSelectors() (map[client.Object]cache.ByObject, error) {
 	}, nil
 }
 
-func exitOnError(err error, msg string, keysAndValues ...interface{}) {
+func exitOnError(err error, msg string, keysAndValues ...any) {
 	if err != nil {
 		setupLog.Error(err, msg, keysAndValues...)
 		os.Exit(1)
