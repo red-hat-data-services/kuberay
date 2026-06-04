@@ -84,7 +84,7 @@ func TestEnsureReferenceGrant(t *testing.T) {
 	assert.Equal(t, "platform-namespace", string(rg.Spec.From[0].Namespace), "From namespace should be platform namespace")
 
 	assert.Len(t, rg.Spec.To, 1, "Should have one To entry")
-	assert.Equal(t, "", string(rg.Spec.To[0].Group), "To group should be empty (core API)")
+	assert.Empty(t, string(rg.Spec.To[0].Group), "To group should be empty (core API)")
 	assert.Equal(t, "Service", string(rg.Spec.To[0].Kind), "To kind should be Service")
 
 	// Verify NO owner reference (shared grant)

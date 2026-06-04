@@ -148,7 +148,7 @@ func TestWebhookStrictEnforcementOnOpenShift(t *testing.T) {
 		}
 
 		// Call webhook multiple times
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			err := defaulter.Default(ctx, rayCluster)
 			require.NoError(t, err)
 			assert.False(t, *rayCluster.Spec.HeadGroupSpec.EnableIngress,

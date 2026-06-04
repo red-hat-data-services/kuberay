@@ -6,6 +6,7 @@ $(LOCALBIN):
 REPO_ROOT := $(shell dirname ${PWD})
 REPO_ROOT_BIN := $(REPO_ROOT)/bin
 GOLANGCI_LINT ?= $(REPO_ROOT_BIN)/golangci-lint
+GOLANGCI_LINT_VERSION ?= v2.7.2
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # This is a requirement for 'setup-envtest.sh' in the test target.
@@ -23,13 +24,19 @@ vet: ## Run go vet against code.
 golangci-lint: ## Download golangci_lint locally if necessary.
 	test -s $(GOLANGCI_LINT) || (curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | bash -s -- -b $(REPO_ROOT_BIN)/ $(GOLANGCI_LINT_VERSION))
 
+# Exclude the SA1019 check which checks the usage of deprecated fields
+# via the linters.settings.staticcheck.checks configuration in .golangci.yaml.
 .PHONY: lint
 lint: golangci-lint fmt vet ## Run the linter.
-	# exclude the SA1019 check which checks the usage of deprecated fields.
-	test -s $(GOLANGCI_LINT) || ($(GOLANGCI_LINT) run --timeout=3m --exclude='SA1019' --no-config --allow-parallel-runners)
+	test -s $(GOLANGCI_LINT) || ($(GOLANGCI_LINT) run --timeout=3m --allow-parallel-runners)
+
+# TODO: Remove this once a fix for https://github.com/golang/go/issues/75031 is released.
+# This is a workaround for an issue where `go test -cover` reports errors for packages with no test files.
+GOVERSION := $(shell go env GOVERSION)
+export GOTOOLCHAIN := $(GOVERSION)+auto
 
 test: WHAT ?= $(shell go list ./... | grep -v /test/)
-test: ENVTEST_K8S_VERSION ?= 1.24.2
+test: ENVTEST_K8S_VERSION ?= 1.34.1
 test: envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test -v $(WHAT) -coverprofile cover.out
 
@@ -38,7 +45,7 @@ test: envtest ## Run tests.
 ENVTEST = $(LOCALBIN)/setup-envtest
 $(ENVTEST): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest locally if necessary.
-	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20240201105228-4000e996a202
+	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.23
 
 .PHONY: clean
 clean:
