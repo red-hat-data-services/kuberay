@@ -67,7 +67,7 @@ jobs:
             set -euo pipefail
             cd ray-operator
             # only test the subset of tests - the rest will be tested post-merge
-            go test -timeout 120m -p 1 -parallel 1 -v -run '^(TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode)$' ./test/e2e -json 2>&1 | tee ./gotest.log | gotestfmt
+            go test -timeout 120m -p 1 -parallel 1 -v -run '^(TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode)$' ./test/e2erayjob -json 2>&1 | tee ./gotest.log | gotestfmt
 
         - name: Print KubeRay operator logs
           if: steps.deploy.outcome == 'success'
