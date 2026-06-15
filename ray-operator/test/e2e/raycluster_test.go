@@ -28,7 +28,7 @@ func TestRayClusterManagedBy(t *testing.T) {
 		t.Parallel()
 
 		rayClusterAC := rayv1ac.RayCluster("raycluster-ok", namespace.Name).
-			WithSpec(newRayClusterSpec().
+			WithSpec(NewRayClusterSpec().
 				WithManagedBy(utils.KubeRayController))
 
 		rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
@@ -44,7 +44,7 @@ func TestRayClusterManagedBy(t *testing.T) {
 		t.Parallel()
 
 		rayClusterAC := rayv1ac.RayCluster("raycluster-skip", namespace.Name).
-			WithSpec(newRayClusterSpec().
+			WithSpec(NewRayClusterSpec().
 				WithManagedBy("kueue.x-k8s.io/multikueue"))
 
 		rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
@@ -70,7 +70,7 @@ func TestRayClusterManagedBy(t *testing.T) {
 		t.Parallel()
 
 		rayClusterAC := rayv1ac.RayCluster("raycluster-fail", namespace.Name).
-			WithSpec(newRayClusterSpec().
+			WithSpec(NewRayClusterSpec().
 				WithManagedBy("controller.com/not-supported"))
 
 		_, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
@@ -85,7 +85,7 @@ func TestRayClusterSuspend(t *testing.T) {
 	// Create a namespace
 	namespace := test.NewTestNamespace()
 
-	rayClusterAC := rayv1ac.RayCluster("raycluster-suspend", namespace.Name).WithSpec(newRayClusterSpec())
+	rayClusterAC := rayv1ac.RayCluster("raycluster-suspend", namespace.Name).WithSpec(NewRayClusterSpec())
 
 	rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -134,7 +134,7 @@ func TestRayClusterWithResourceQuota(t *testing.T) {
 	// Create a resource quota
 	CreateResourceQuota(test, namespace.Name, "test-quota", "0.1", "0.1Gi")
 
-	rayClusterAC := rayv1ac.RayCluster("raycluster-resource-quota", namespace.Name).WithSpec(newRayClusterSpec())
+	rayClusterAC := rayv1ac.RayCluster("raycluster-resource-quota", namespace.Name).WithSpec(NewRayClusterSpec())
 
 	rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -157,14 +157,14 @@ func TestRayClusterScalingDown(t *testing.T) {
 			WithRayVersion(GetRayVersion()).
 			WithHeadGroupSpec(rayv1ac.HeadGroupSpec().
 				WithRayStartParams(map[string]string{"dashboard-host": "0.0.0.0"}).
-				WithTemplate(headPodTemplateApplyConfiguration().WithFinalizers("test.kuberay.io/finalizers"))).
+				WithTemplate(HeadPodTemplateApplyConfiguration().WithFinalizers("test.kuberay.io/finalizers"))).
 			WithWorkerGroupSpecs(rayv1ac.WorkerGroupSpec().
 				WithReplicas(2).
 				WithMinReplicas(1).
 				WithMaxReplicas(5).
 				WithGroupName("small-group").
 				WithRayStartParams(map[string]string{"num-cpus": "1"}).
-				WithTemplate(workerPodTemplateApplyConfiguration().WithFinalizers("test.kuberay.io/finalizers"))))
+				WithTemplate(WorkerPodTemplateApplyConfiguration().WithFinalizers("test.kuberay.io/finalizers"))))
 
 	rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -207,4 +207,60 @@ func TestRayClusterScalingDown(t *testing.T) {
 		_, err := test.Client().Core().CoreV1().Pods(namespace.Name).Patch(test.Ctx(), pod.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to remove finalizer from pod %s/%s", namespace.Name, pod.Name)
 	}
+}
+
+func TestRayClusterUpgradeStrategy(t *testing.T) {
+	test := With(t)
+	g := NewWithT(t)
+
+	namespace := test.NewTestNamespace()
+
+	rayClusterAC := rayv1ac.RayCluster("raycluster-upgrade-recreate", namespace.Name).WithSpec(NewRayClusterSpec())
+	rayClusterAC.Spec.UpgradeStrategy = rayv1ac.RayClusterUpgradeStrategy().WithType(rayv1.RayClusterRecreate)
+
+	rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
+	g.Expect(err).NotTo(HaveOccurred())
+	LogWithTimestamp(test.T(), "Created RayCluster %s/%s successfully", namespace.Name, rayCluster.Name)
+
+	LogWithTimestamp(test.T(), "Waiting for RayCluster %s/%s to become ready", namespace.Name, rayCluster.Name)
+	g.Eventually(RayCluster(test, rayCluster.Namespace, rayCluster.Name), TestTimeoutMedium).
+		Should(WithTransform(RayClusterState, Equal(rayv1.Ready)))
+
+	headPod, err := GetHeadPod(test, rayCluster)
+	g.Expect(err).NotTo(HaveOccurred())
+	initialHeadPodName := headPod.Name
+	initialHeadPodHash := headPod.Annotations[utils.UpgradeStrategyRecreateHashKey]
+
+	workerPods, err := GetWorkerPods(test, rayCluster)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(workerPods).To(HaveLen(1))
+
+	LogWithTimestamp(test.T(), "Updating RayCluster %s/%s rayVersion and container image to trigger upgrade", rayCluster.Namespace, rayCluster.Name)
+	// Update rayVersion and container image to trigger Recreate upgrade
+	rayClusterAC.Spec.WithRayVersion("2.51.0")
+	rayClusterAC.Spec.HeadGroupSpec.Template.Spec.Containers[0].WithImage("rayproject/ray:2.51.0")
+	rayClusterAC.Spec.WorkerGroupSpecs[0].Template.Spec.Containers[0].WithImage("rayproject/ray:2.51.0")
+	rayCluster, err = test.Client().Ray().RayV1().RayClusters(namespace.Name).Apply(test.Ctx(), rayClusterAC, TestApplyOptions)
+	g.Expect(err).NotTo(HaveOccurred())
+	LogWithTimestamp(test.T(), "Updated RayCluster pod template")
+
+	LogWithTimestamp(test.T(), "Waiting for new head pod to be running after recreate")
+	g.Eventually(func() bool {
+		newHeadPod, err := GetHeadPod(test, rayCluster)
+		if err != nil {
+			return false
+		}
+		return newHeadPod.Name != initialHeadPodName && newHeadPod.Status.Phase == corev1.PodRunning
+	}, TestTimeoutMedium).Should(BeTrue())
+
+	newHeadPod, err := GetHeadPod(test, rayCluster)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(newHeadPod.Name).NotTo(Equal(initialHeadPodName))
+
+	newHeadPodHash := newHeadPod.Annotations[utils.UpgradeStrategyRecreateHashKey]
+	g.Expect(newHeadPodHash).NotTo(Equal(initialHeadPodHash))
+
+	newWorkerPods, err := GetWorkerPods(test, rayCluster)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(newWorkerPods).To(HaveLen(1))
 }
