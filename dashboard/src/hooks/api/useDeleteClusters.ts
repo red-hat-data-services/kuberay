@@ -5,7 +5,7 @@ import { useNamespace } from "@/components/NamespaceProvider";
 import { config } from "@/utils/constants";
 
 async function _deleteCluster(namespace: string, clusterName: string) {
-  const baseUrl = `${config.url}/namespaces/${namespace}/clusters/`;
+  const baseUrl = `${config.rayApiUrl}/namespaces/${namespace}/rayclusters/`;
   const response = await fetch(`${baseUrl}${clusterName}`, {
     method: "DELETE",
   });
@@ -29,22 +29,22 @@ export const useDeleteClusters = () => {
     // response is empty.
     try {
       await mutate(
-        `/namespaces/${namespace}/clusters`,
+        `/namespaces/${namespace}/rayclusters`,
         Promise.all(
-          clusters.map((clusterName) => _deleteCluster(namespace, clusterName))
+          clusters.map((clusterName) => _deleteCluster(namespace, clusterName)),
         ),
-        { populateCache: false }
+        { populateCache: false },
       );
       snackBar.showSnackBar(
         `${clusters.length} cluster${clusters.length > 1 ? "s" : ""} deleted`,
         `Deleted ${clusters.join(", ")}`,
-        "success"
+        "success",
       );
     } catch (err) {
       snackBar.showSnackBar(
         "Failed to delete clusters",
         "Error: " + err,
-        "danger"
+        "danger",
       );
     }
     setDeleting(false);
