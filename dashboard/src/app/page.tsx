@@ -13,18 +13,19 @@ import {
 import NextLink from "next/link";
 import WorkIcon from "@mui/icons-material/Work";
 import LanIcon from "@mui/icons-material/Lan";
-import { useEffect, useState } from "react";
+import HistoryIcon from "@mui/icons-material/History";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useFirstVisit } from "@/components/FirstVisitContext";
 import { roblox } from "@/utils/constants";
+import { fetchRuntimeConfig } from "@/utils/constants";
+
 const HomePage = () => {
   const router = useRouter();
-  const { firstVisit } = useFirstVisit();
+
   useEffect(() => {
-    if (firstVisit) {
-      router.push("/jobs");
-    }
-  }, [])
+    fetchRuntimeConfig();
+  }, []);
+
   return (
     <>
       <Box
@@ -37,11 +38,20 @@ const HomePage = () => {
         }}
       >
         <Typography level="h2" component="h2">
-          Ray Platform
+          KubeRay Dashboard
         </Typography>
       </Box>
-      <Alert color="warning" sx={{ my: 3 }}>
-        Excuse the mess. This is current under development.
+      <Alert color="neutral" sx={{ my: 3 }}>
+        This is in the experimental stage, if you encounter any issues, please
+        report them on{" "}
+        <Link
+          href="https://github.com/ray-project/kuberay/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub
+        </Link>
+        .
       </Alert>
       <ToggleButtonGroup spacing={2} className="flex-wrap">
         <Button
@@ -82,6 +92,27 @@ const HomePage = () => {
           <Typography level="body-xs" textAlign="left" width={200}>
             Persistent clusters for interactive development sessions. VS Code
             included.
+          </Typography>
+        </Button>
+
+        <Button
+          className="flex flex-col items-start justify-start py-3"
+          component={NextLink}
+          href="/history"
+        >
+          <Stack
+            direction="row"
+            width={200}
+            gap={1}
+            alignItems="center"
+            marginBottom={0.7}
+          >
+            <HistoryIcon />
+            <Typography level="title-lg">History</Typography>
+          </Stack>
+          <Typography level="body-xs" textAlign="left" width={200}>
+            Historical Ray dashboard data (tasks, logs, etc.) via history
+            server.
           </Typography>
         </Button>
       </ToggleButtonGroup>
@@ -130,18 +161,10 @@ const HomePage = () => {
             </Link>
           </Box>
           <Box display="flex" gap={3} my={2}>
-            <Link
-              color="neutral"
-              borderRadius="sm"
-              target="_blank"
-            >
+            <Link color="neutral" borderRadius="sm" target="_blank">
               Ray API Walkthrough
             </Link>
-            <Link
-              color="neutral"
-              borderRadius="sm"
-              target="_blank"
-            >
+            <Link color="neutral" borderRadius="sm" target="_blank">
               Multimodal Batch API Walkthrough
             </Link>
           </Box>

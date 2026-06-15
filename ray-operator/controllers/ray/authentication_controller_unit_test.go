@@ -1146,7 +1146,7 @@ func TestEnforceEnableIngressFalseOnOpenShift_Idempotency(t *testing.T) {
 	}
 
 	// Call enforcement multiple times
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		// Get latest version
 		err := fakeClient.Get(context.Background(),
 			types.NamespacedName{Name: rayCluster.Name, Namespace: rayCluster.Namespace},
