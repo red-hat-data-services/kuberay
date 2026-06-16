@@ -44,7 +44,7 @@ func (l *RayResourceLogger) Helper() {
 	l.t.T().Helper()
 }
 
-func (l *RayResourceLogger) Fatalf(format string, args ...any) {
+func (l *RayResourceLogger) Fatalf(format string, args ...interface{}) {
 	l.Helper()
 	loggers := l.GetLoggers()
 	var sb strings.Builder

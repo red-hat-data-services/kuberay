@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -57,7 +56,9 @@ var _ = Describe("Calling ray plugin `log` command on Ray Cluster", func() {
 
 			currentRequiredFileList := make(map[string]string)
 
-			maps.Copy(currentRequiredFileList, requiredFileSet)
+			for key, value := range requiredFileSet {
+				currentRequiredFileList[key] = value
+			}
 
 			for _, logFile := range logList {
 				if checkContent := currentRequiredFileList[logFile.Name()]; checkContent != "" {
@@ -108,7 +109,9 @@ var _ = Describe("Calling ray plugin `log` command on Ray Cluster", func() {
 
 			currentRequiredFileList := make(map[string]string)
 
-			maps.Copy(currentRequiredFileList, requiredFileSet)
+			for key, value := range requiredFileSet {
+				currentRequiredFileList[key] = value
+			}
 
 			for _, logFile := range logList {
 				if checkContent := currentRequiredFileList[logFile.Name()]; checkContent != "" {
@@ -160,7 +163,9 @@ var _ = Describe("Calling ray plugin `log` command on Ray Cluster", func() {
 
 			currentRequiredFileList := make(map[string]string)
 
-			maps.Copy(currentRequiredFileList, requiredFileSet)
+			for key, value := range requiredFileSet {
+				currentRequiredFileList[key] = value
+			}
 
 			for _, logFile := range logList {
 				if checkContent := currentRequiredFileList[logFile.Name()]; checkContent != "" {

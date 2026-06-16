@@ -18,10 +18,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	api "github.com/ray-project/kuberay/proto/go_client"
-	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils/dashboardclient"
-	utiltypes "github.com/ray-project/kuberay/ray-operator/controllers/ray/utils/types"
 )
 
 type RayJobSubmissionServiceServerOptions struct {
@@ -34,14 +31,14 @@ type RayJobSubmissionServiceServer struct {
 	api.UnimplementedRayJobSubmissionServiceServer
 	options             *RayJobSubmissionServiceServerOptions
 	clusterServer       *ClusterServer
-	dashboardClientFunc func(rayCluster *rayv1.RayCluster, url string) (dashboardclient.RayDashboardClientInterface, error)
+	dashboardClientFunc func() utils.RayDashboardClientInterface
 	log                 logr.Logger
 }
 
 // Create RayJobSubmissionServiceServer
 func NewRayJobSubmissionServiceServer(clusterServer *ClusterServer, options *RayJobSubmissionServiceServerOptions) *RayJobSubmissionServiceServer {
 	zl := zerolog.New(os.Stdout).Level(zerolog.DebugLevel)
-	return &RayJobSubmissionServiceServer{clusterServer: clusterServer, options: options, log: zerologr.New(&zl).WithName("jobsubmissionservice"), dashboardClientFunc: utils.GetRayDashboardClientFunc(context.Background(), nil, false)}
+	return &RayJobSubmissionServiceServer{clusterServer: clusterServer, options: options, log: zerologr.New(&zl).WithName("jobsubmissionservice"), dashboardClientFunc: utils.GetRayDashboardClientFunc(nil, false)}
 }
 
 // Submit Ray job
@@ -52,11 +49,12 @@ func (s *RayJobSubmissionServiceServer) SubmitRayJob(ctx context.Context, req *a
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
-	request := &utiltypes.RayJobRequest{Entrypoint: req.Jobsubmission.Entrypoint}
+	request := &utils.RayJobRequest{Entrypoint: req.Jobsubmission.Entrypoint}
 	if req.Jobsubmission.SubmissionId != "" {
 		request.SubmissionId = req.Jobsubmission.SubmissionId
 	}
@@ -68,7 +66,7 @@ func (s *RayJobSubmissionServiceServer) SubmitRayJob(ctx context.Context, req *a
 		if err != nil {
 			return nil, err
 		}
-		re := make(map[string]any)
+		re := make(map[string]interface{})
 		err = json.Unmarshal(jsonData, &re)
 		if err != nil {
 			return nil, err
@@ -91,7 +89,7 @@ func (s *RayJobSubmissionServiceServer) SubmitRayJob(ctx context.Context, req *a
 		}
 	}
 
-	sid, err := rayDashboardClient.SubmitJobReq(ctx, request)
+	sid, err := rayDashboardClient.SubmitJobReq(ctx, request, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +104,9 @@ func (s *RayJobSubmissionServiceServer) GetJobDetails(ctx context.Context, req *
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
 	nodeInfo, err := rayDashboardClient.GetJobInfo(ctx, req.Submissionid)
@@ -128,8 +127,9 @@ func (s *RayJobSubmissionServiceServer) GetJobLog(ctx context.Context, req *api.
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
 	jlog, err := rayDashboardClient.GetJobLog(ctx, req.Submissionid)
@@ -150,8 +150,9 @@ func (s *RayJobSubmissionServiceServer) ListJobDetails(ctx context.Context, req 
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
 	nodesInfo, err := rayDashboardClient.ListJobs(ctx)
@@ -173,8 +174,9 @@ func (s *RayJobSubmissionServiceServer) StopRayJob(ctx context.Context, req *api
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
 	err = rayDashboardClient.StopJob(ctx, req.Submissionid)
@@ -192,8 +194,9 @@ func (s *RayJobSubmissionServiceServer) DeleteRayJob(ctx context.Context, req *a
 	if err != nil {
 		return nil, err
 	}
-	rayDashboardClient, err := s.dashboardClientFunc(nil, *url)
-	if err != nil {
+	rayDashboardClient := s.dashboardClientFunc()
+	// TODO: support proxy subresources in kuberay-apiserver
+	if err := rayDashboardClient.InitClient(ctx, *url, nil); err != nil {
 		return nil, err
 	}
 	err = rayDashboardClient.DeleteJob(ctx, req.Submissionid)
@@ -218,7 +221,7 @@ func (s *RayJobSubmissionServiceServer) getRayClusterURL(ctx context.Context, re
 }
 
 // Internal method to convert RayJobInfo to JobSubmissionInfo
-func convertNodeInfo(info *utiltypes.RayJobInfo) *api.JobSubmissionInfo {
+func convertNodeInfo(info *utils.RayJobInfo) *api.JobSubmissionInfo {
 	jsi := api.JobSubmissionInfo{
 		Entrypoint:   info.Entrypoint,
 		JobId:        info.JobId,

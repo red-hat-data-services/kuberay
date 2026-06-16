@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"strconv"
 	"strings"
@@ -180,8 +179,7 @@ func buildHeadPodTemplate(imageVersion string, envs *api.EnvironmentVariables, s
 
 	// calculate resources
 	cpu := fmt.Sprint(computeRuntime.GetCpu())
-	memoryUnit := computeRuntime.GetMemoryUnit()
-	memory := fmt.Sprintf("%d%s", computeRuntime.GetMemory(), memoryUnit)
+	memory := fmt.Sprintf("%d%s", computeRuntime.GetMemory(), "Gi")
 
 	// build volume and volumeMounts
 	volMounts := buildVolumeMounts(spec.Volumes)
@@ -288,12 +286,16 @@ func buildHeadPodTemplate(imageVersion string, envs *api.EnvironmentVariables, s
 
 	// Add specific annotations
 	if spec.Annotations != nil {
-		maps.Copy(podTemplateSpec.ObjectMeta.Annotations, spec.Annotations)
+		for k, v := range spec.Annotations {
+			podTemplateSpec.ObjectMeta.Annotations[k] = v
+		}
 	}
 
 	// Add specific labels
 	if spec.Labels != nil {
-		maps.Copy(podTemplateSpec.ObjectMeta.Labels, spec.Labels)
+		for k, v := range spec.Labels {
+			podTemplateSpec.ObjectMeta.Labels[k] = v
+		}
 	}
 
 	// Add specific tollerations
@@ -431,8 +433,7 @@ func buildWorkerPodTemplate(imageVersion string, envs *api.EnvironmentVariables,
 
 	// calculate resources
 	cpu := fmt.Sprint(computeRuntime.GetCpu())
-	memoryUnit := computeRuntime.GetMemoryUnit()
-	memory := fmt.Sprintf("%d%s", computeRuntime.GetMemory(), memoryUnit)
+	memory := fmt.Sprintf("%d%s", computeRuntime.GetMemory(), "Gi")
 
 	// build volume and volumeMounts
 	volMounts := buildVolumeMounts(spec.Volumes)
@@ -579,12 +580,16 @@ func buildWorkerPodTemplate(imageVersion string, envs *api.EnvironmentVariables,
 
 	// Add specific annotations
 	if spec.Annotations != nil {
-		maps.Copy(podTemplateSpec.ObjectMeta.Annotations, spec.Annotations)
+		for k, v := range spec.Annotations {
+			podTemplateSpec.ObjectMeta.Annotations[k] = v
+		}
 	}
 
 	// Add specific labels
 	if spec.Labels != nil {
-		maps.Copy(podTemplateSpec.ObjectMeta.Labels, spec.Labels)
+		for k, v := range spec.Labels {
+			podTemplateSpec.ObjectMeta.Labels[k] = v
+		}
 	}
 
 	// Add specific tollerations
@@ -842,25 +847,13 @@ func NewComputeTemplate(runtime *api.ComputeTemplate) (*corev1.ConfigMap, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal extended resources: %w", err)
 	}
-	memoryUnit := "Gi"
-	if runtime.MemoryUnit != "" {
-		memoryUnit = runtime.MemoryUnit
-	}
-
-	memory := strconv.FormatUint(uint64(runtime.Memory), 10)
-	quantity := memory + memoryUnit
-
-	if _, err := resource.ParseQuantity(quantity); err != nil {
-		return nil, fmt.Errorf("invalid memory quantity %q: %w", quantity, err)
-	}
 
 	// Create data map
 	dmap := map[string]string{
 		"name":               runtime.Name,
 		"namespace":          runtime.Namespace,
 		"cpu":                strconv.FormatUint(uint64(runtime.Cpu), 10),
-		"memory":             memory,
-		"memory_unit":        memoryUnit,
+		"memory":             strconv.FormatUint(uint64(runtime.Memory), 10),
 		"gpu":                strconv.FormatUint(uint64(runtime.Gpu), 10),
 		"gpu_accelerator":    runtime.GpuAccelerator,
 		"extended_resources": string(extendedResourcesJSON),

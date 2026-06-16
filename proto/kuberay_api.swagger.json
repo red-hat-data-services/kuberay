@@ -136,15 +136,12 @@
             "type": "string"
           },
           {
-            "name": "cluster",
+            "name": "body",
             "description": "Required. The cluster to be created.",
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoCluster",
-              "required": [
-                "cluster"
-              ]
+              "$ref": "#/definitions/protoCluster"
             }
           }
         ],
@@ -198,7 +195,6 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "type": "object",
               "properties": {}
             }
           },
@@ -273,7 +269,7 @@
         },
         "parameters": [
           {
-            "name": "imageTemplate",
+            "name": "body",
             "description": "The image template to be created.",
             "in": "body",
             "required": true,
@@ -315,7 +311,7 @@
         "parameters": [
           {
             "name": "namespace",
-            "description": "Required. The namespace of the compute templates to be retrieved.\n\nTODO: support paganation later",
+            "description": "Required. The namespace of the compute templates to be retrieved.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -351,15 +347,12 @@
             "type": "string"
           },
           {
-            "name": "computeTemplate",
+            "name": "body",
             "description": "The compute template to be created.",
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoComputeTemplate",
-              "required": [
-                "computeTemplate"
-              ]
+              "$ref": "#/definitions/protoComputeTemplate"
             }
           }
         ],
@@ -413,7 +406,6 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "type": "object",
               "properties": {}
             }
           },
@@ -466,7 +458,7 @@
         "parameters": [
           {
             "name": "namespace",
-            "description": "The namespace of the image templates to be retrieved.\n\nTODO: support pagingation later",
+            "description": "The namespace of the image templates to be retrieved.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -522,7 +514,6 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "type": "object",
               "properties": {}
             }
           },
@@ -666,15 +657,12 @@
             "type": "string"
           },
           {
-            "name": "job",
+            "name": "body",
             "description": "Required. The job to be created.",
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoRayJob",
-              "required": [
-                "job"
-              ]
+              "$ref": "#/definitions/protoRayJob"
             }
           }
         ],
@@ -728,7 +716,6 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "type": "object",
               "properties": {}
             }
           },
@@ -832,15 +819,12 @@
             "type": "string"
           },
           {
-            "name": "service",
+            "name": "body",
             "description": "Required. The ray service to be created.",
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoRayService",
-              "required": [
-                "service"
-              ]
+              "$ref": "#/definitions/protoRayService"
             }
           }
         ],
@@ -894,7 +878,6 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "type": "object",
               "properties": {}
             }
           },
@@ -958,15 +941,12 @@
             "type": "string"
           },
           {
-            "name": "service",
+            "name": "body",
             "description": "Required. The ray service to be updated.",
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoRayService",
-              "required": [
-                "service"
-              ]
+              "$ref": "#/definitions/protoRayService"
             }
           }
         ],
@@ -1046,8 +1026,7 @@
         "ROX",
         "RWX"
       ],
-      "default": "RWO",
-      "title": "- RWO: ReadWriteOnce\n - ROX: ReadOnlyMany\n - RWX: ReadWriteMany"
+      "default": "RWO"
     },
     "VolumeHostPathType": {
       "type": "string",
@@ -1077,8 +1056,7 @@
         "SECRET",
         "EMPTY_DIR"
       ],
-      "default": "PERSISTENT_VOLUME_CLAIM",
-      "title": "- EPHEMERAL: Ephemeral (https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#generic-ephemeral-volumes)\n - CONFIGMAP: Require map name and items, see https://kubernetes.io/docs/concepts/storage/volumes/#configmap\n - SECRET: Require secret name and optional items, see https://stackoverflow.com/questions/53296057/how-do-i-mount-a-single-file-from-a-secret-in-kubernetes\n - EMPTY_DIR: Requires size limit, see https://kubernetes.io/docs/concepts/storage/volumes/#emptydir"
+      "default": "PERSISTENT_VOLUME_CLAIM"
     },
     "googlerpcStatus": {
       "type": "object",
@@ -1093,7 +1071,6 @@
         "details": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protobufAny"
           }
         }
@@ -1134,7 +1111,6 @@
         "volumes": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoVolume"
           },
           "description": "Optional list of volumeMounts.  This is needed for enabling TLS for the autoscaler container."
@@ -1166,15 +1142,24 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Required input field. Unique cluster name provided by user."
+          "description": "Required input field. Unique cluster name provided by user.",
+          "required": [
+            "name"
+          ]
         },
         "namespace": {
           "type": "string",
-          "title": "Required input field. Cluster's namespace provided by user"
+          "title": "Required input field. Cluster's namespace provided by user",
+          "required": [
+            "namespace"
+          ]
         },
         "user": {
           "type": "string",
-          "description": "Required field. This field indicates the user who owns the cluster."
+          "description": "Required field. This field indicates the user who owns the cluster.",
+          "required": [
+            "user"
+          ]
         },
         "version": {
           "type": "string",
@@ -1218,7 +1203,6 @@
         "events": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoClusterEvent"
           },
           "description": "Output. The list related to the cluster.",
@@ -1236,8 +1220,7 @@
       "required": [
         "name",
         "namespace",
-        "user",
-        "clusterSpec"
+        "user"
       ]
     },
     "protoClusterEvent": {
@@ -1295,7 +1278,6 @@
         "workerGroupSpec": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoWorkerGroupSpec"
           },
           "title": "Optional. The worker group configurations"
@@ -1316,10 +1298,7 @@
           "title": "Optional. The annotations for the head service"
         }
       },
-      "description": "Cluster specification.",
-      "required": [
-        "headGroupSpec"
-      ]
+      "description": "Cluster specification."
     },
     "protoEnvValueFrom": {
       "type": "object",
@@ -1360,7 +1339,10 @@
       "properties": {
         "computeTemplate": {
           "type": "string",
-          "title": "Required. The computeTemplate of head node group"
+          "title": "Required. The computeTemplate of head node group",
+          "required": [
+            "compute_template"
+          ]
         },
         "image": {
           "type": "string",
@@ -1379,12 +1361,14 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Required. The ray start params of head node group."
+          "description": "Required. The ray start params of head node group.",
+          "required": [
+            "ray_start_params"
+          ]
         },
         "volumes": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoVolume"
           },
           "title": "Optional. The volumes mount to head pod"
@@ -1436,7 +1420,6 @@
         "clusters": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoCluster"
           },
           "description": "A list of clusters returned.",
@@ -1455,7 +1438,6 @@
         "clusters": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoCluster"
           },
           "description": "A list of clusters returned.",
@@ -1492,16 +1474,13 @@
           "$ref": "#/definitions/VolumeVolumeType"
         },
         "name": {
-          "type": "string",
-          "title": "volume name"
+          "type": "string"
         },
         "source": {
-          "type": "string",
-          "title": "volume source, for example hostpath source, secret or configMap name, etc"
+          "type": "string"
         },
         "readOnly": {
-          "type": "boolean",
-          "title": "Read only flag"
+          "type": "boolean"
         },
         "hostPathType": {
           "$ref": "#/definitions/VolumeHostPathType"
@@ -1511,22 +1490,19 @@
         },
         "storageClassName": {
           "type": "string",
-          "description": "If not defined, default is used",
           "title": "If indicate ephemeral, we need to let user specify volumeClaimTemplate"
         },
         "accessMode": {
           "$ref": "#/definitions/VolumeAccessMode"
         },
         "storage": {
-          "type": "string",
-          "title": "For ephemeral - required storage, GB, for empty dir - MB"
+          "type": "string"
         },
         "items": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
-          },
-          "title": "Items used for configMap and secrets"
+          }
         }
       }
     },
@@ -1535,11 +1511,17 @@
       "properties": {
         "groupName": {
           "type": "string",
-          "title": "Required. Group name of the current worker group"
+          "title": "Required. Group name of the current worker group",
+          "required": [
+            "group_name"
+          ]
         },
         "computeTemplate": {
           "type": "string",
-          "title": "Required. The computeTemplate of head node group"
+          "title": "Required. The computeTemplate of head node group",
+          "required": [
+            "compute_template"
+          ]
         },
         "image": {
           "type": "string",
@@ -1548,7 +1530,10 @@
         "replicas": {
           "type": "integer",
           "format": "int32",
-          "title": "Required. Desired replicas of the worker group"
+          "title": "Required. Desired replicas of the worker group",
+          "required": [
+            "replicas"
+          ]
         },
         "minReplicas": {
           "type": "integer",
@@ -1558,19 +1543,24 @@
         "maxReplicas": {
           "type": "integer",
           "format": "int32",
-          "title": "Required. Max replicas of the worker group (>0)"
+          "title": "Required. Max replicas of the worker group (>0)",
+          "required": [
+            "max_replicas"
+          ]
         },
         "rayStartParams": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
           },
-          "title": "Required. The ray start parameters of worker node group"
+          "title": "Required. The ray start parameters of worker node group",
+          "required": [
+            "ray_start_params"
+          ]
         },
         "volumes": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoVolume"
           },
           "title": "Optional. The volumes mount to worker pods"
@@ -1621,34 +1611,50 @@
     "protobufAny": {
       "type": "object",
       "properties": {
-        "@type": {
+        "typeUrl": {
           "type": "string",
-          "description": "A URL/resource name that uniquely identifies the type of the serialized\nprotocol buffer message. This string must contain at least\none \"/\" character. The last segment of the URL's path must represent\nthe fully qualified name of the type (as in\n`path/google.protobuf.Duration`). The name should be in a canonical form\n(e.g., leading \".\" is not accepted).\n\nIn practice, teams usually precompile into the binary all types that they\nexpect it to use in the context of Any. However, for URLs which use the\nscheme `http`, `https`, or no scheme, one can optionally set up a type\nserver that maps type URLs to message definitions as follows:\n\n* If no scheme is provided, `https` is assumed.\n* An HTTP GET on the URL must yield a [google.protobuf.Type][]\n  value in binary format, or produce an error.\n* Applications are allowed to cache lookup results based on the\n  URL, or have them precompiled into a binary to avoid any\n  lookup. Therefore, binary compatibility needs to be preserved\n  on changes to types. (Use versioned type names to manage\n  breaking changes.)\n\nNote: this functionality is not currently available in the official\nprotobuf release, and it is not used for type URLs beginning with\ntype.googleapis.com. As of May 2023, there are no widely used type server\nimplementations and no plans to implement one.\n\nSchemes other than `http`, `https` (or the empty scheme) might be\nused with implementation specific semantics."
+          "description": "A URL/resource name that uniquely identifies the type of the serialized\nprotocol buffer message. This string must contain at least\none \"/\" character. The last segment of the URL's path must represent\nthe fully qualified name of the type (as in\n`path/google.protobuf.Duration`). The name should be in a canonical form\n(e.g., leading \".\" is not accepted).\n\nIn practice, teams usually precompile into the binary all types that they\nexpect it to use in the context of Any. However, for URLs which use the\nscheme `http`, `https`, or no scheme, one can optionally set up a type\nserver that maps type URLs to message definitions as follows:\n\n* If no scheme is provided, `https` is assumed.\n* An HTTP GET on the URL must yield a [google.protobuf.Type][]\n  value in binary format, or produce an error.\n* Applications are allowed to cache lookup results based on the\n  URL, or have them precompiled into a binary to avoid any\n  lookup. Therefore, binary compatibility needs to be preserved\n  on changes to types. (Use versioned type names to manage\n  breaking changes.)\n\nNote: this functionality is not currently available in the official\nprotobuf release, and it is not used for type URLs beginning with\ntype.googleapis.com.\n\nSchemes other than `http`, `https` (or the empty scheme) might be\nused with implementation specific semantics."
+        },
+        "value": {
+          "type": "string",
+          "format": "byte",
+          "description": "Must be a valid serialized protocol buffer of the above specified type."
         }
       },
-      "additionalProperties": {},
-      "description": "`Any` contains an arbitrary serialized protocol buffer message along with a\nURL that describes the type of the serialized message.\n\nProtobuf library provides support to pack/unpack Any values in the form\nof utility functions or additional generated methods of the Any type.\n\nExample 1: Pack and unpack a message in C++.\n\n    Foo foo = ...;\n    Any any;\n    any.PackFrom(foo);\n    ...\n    if (any.UnpackTo(&foo)) {\n      ...\n    }\n\nExample 2: Pack and unpack a message in Java.\n\n    Foo foo = ...;\n    Any any = Any.pack(foo);\n    ...\n    if (any.is(Foo.class)) {\n      foo = any.unpack(Foo.class);\n    }\n    // or ...\n    if (any.isSameTypeAs(Foo.getDefaultInstance())) {\n      foo = any.unpack(Foo.getDefaultInstance());\n    }\n\n Example 3: Pack and unpack a message in Python.\n\n    foo = Foo(...)\n    any = Any()\n    any.Pack(foo)\n    ...\n    if any.Is(Foo.DESCRIPTOR):\n      any.Unpack(foo)\n      ...\n\n Example 4: Pack and unpack a message in Go\n\n     foo := &pb.Foo{...}\n     any, err := anypb.New(foo)\n     if err != nil {\n       ...\n     }\n     ...\n     foo := &pb.Foo{}\n     if err := any.UnmarshalTo(foo); err != nil {\n       ...\n     }\n\nThe pack methods provided by protobuf library will by default use\n'type.googleapis.com/full.type.name' as the type URL and the unpack\nmethods only use the fully qualified type name after the last '/'\nin the type URL, for example \"foo.bar.com/x/y.z\" will yield type\nname \"y.z\".\n\nJSON\n====\nThe JSON representation of an `Any` value uses the regular\nrepresentation of the deserialized, embedded message, with an\nadditional field `@type` which contains the type URL. Example:\n\n    package google.profile;\n    message Person {\n      string first_name = 1;\n      string last_name = 2;\n    }\n\n    {\n      \"@type\": \"type.googleapis.com/google.profile.Person\",\n      \"firstName\": <string>,\n      \"lastName\": <string>\n    }\n\nIf the embedded message type is well-known and has a custom JSON\nrepresentation, that representation will be embedded adding a field\n`value` which holds the custom JSON in addition to the `@type`\nfield. Example (for message [google.protobuf.Duration][]):\n\n    {\n      \"@type\": \"type.googleapis.com/google.protobuf.Duration\",\n      \"value\": \"1.212s\"\n    }"
+      "description": "`Any` contains an arbitrary serialized protocol buffer message along with a\nURL that describes the type of the serialized message.\n\nProtobuf library provides support to pack/unpack Any values in the form\nof utility functions or additional generated methods of the Any type.\n\nExample 1: Pack and unpack a message in C++.\n\n    Foo foo = ...;\n    Any any;\n    any.PackFrom(foo);\n    ...\n    if (any.UnpackTo(&foo)) {\n      ...\n    }\n\nExample 2: Pack and unpack a message in Java.\n\n    Foo foo = ...;\n    Any any = Any.pack(foo);\n    ...\n    if (any.is(Foo.class)) {\n      foo = any.unpack(Foo.class);\n    }\n\n Example 3: Pack and unpack a message in Python.\n\n    foo = Foo(...)\n    any = Any()\n    any.Pack(foo)\n    ...\n    if any.Is(Foo.DESCRIPTOR):\n      any.Unpack(foo)\n      ...\n\n Example 4: Pack and unpack a message in Go\n\n     foo := &pb.Foo{...}\n     any, err := anypb.New(foo)\n     if err != nil {\n       ...\n     }\n     ...\n     foo := &pb.Foo{}\n     if err := any.UnmarshalTo(foo); err != nil {\n       ...\n     }\n\nThe pack methods provided by protobuf library will by default use\n'type.googleapis.com/full.type.name' as the type URL and the unpack\nmethods only use the fully qualified type name after the last '/'\nin the type URL, for example \"foo.bar.com/x/y.z\" will yield type\nname \"y.z\".\n\n\nJSON\n====\nThe JSON representation of an `Any` value uses the regular\nrepresentation of the deserialized, embedded message, with an\nadditional field `@type` which contains the type URL. Example:\n\n    package google.profile;\n    message Person {\n      string first_name = 1;\n      string last_name = 2;\n    }\n\n    {\n      \"@type\": \"type.googleapis.com/google.profile.Person\",\n      \"firstName\": <string>,\n      \"lastName\": <string>\n    }\n\nIf the embedded message type is well-known and has a custom JSON\nrepresentation, that representation will be embedded adding a field\n`value` which holds the custom JSON in addition to the `@type`\nfield. Example (for message [google.protobuf.Duration][]):\n\n    {\n      \"@type\": \"type.googleapis.com/google.protobuf.Duration\",\n      \"value\": \"1.212s\"\n    }"
     },
     "protoComputeTemplate": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "title": "Required. The name of the compute template"
+          "title": "Required. The name of the compute template",
+          "required": [
+            "name"
+          ]
         },
         "namespace": {
           "type": "string",
-          "title": "Required. The namespace of the compute template"
+          "title": "Required. The namespace of the compute template",
+          "required": [
+            "namespace"
+          ]
         },
         "cpu": {
           "type": "integer",
           "format": "int64",
-          "title": "Required. Number of cpus"
+          "title": "Required. Number of cpus",
+          "required": [
+            "cpu"
+          ]
         },
         "memory": {
           "type": "integer",
           "format": "int64",
-          "title": "Required. Number of memory"
+          "title": "Required. Number of memory",
+          "required": [
+            "memory"
+          ]
         },
         "gpu": {
           "type": "integer",
@@ -1662,7 +1668,6 @@
         "tolerations": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoPodToleration"
           },
           "title": "Optional pod tolerations"
@@ -1674,10 +1679,6 @@
             "format": "int64"
           },
           "title": "Optional. Name and number of the extended resources"
-        },
-        "memoryUnit": {
-          "type": "string",
-          "title": "Optional. The unit of memory, default is \"Gi\" for memory"
         }
       },
       "title": "ComputeTemplate can be reused by any compute units like worker group, workspace, image build job, etc",
@@ -1748,7 +1749,6 @@
         "computeTemplates": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoComputeTemplate"
           },
           "readOnly": true
@@ -1761,7 +1761,6 @@
         "computeTemplates": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoComputeTemplate"
           },
           "readOnly": true
@@ -1774,7 +1773,6 @@
         "imageTemplates": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoImageTemplate"
           },
           "description": "A list of Compute returned."
@@ -1786,11 +1784,17 @@
       "properties": {
         "key": {
           "type": "string",
-          "title": "Required. Key created by the node's taint"
+          "title": "Required. Key created by the node's taint",
+          "required": [
+            "key"
+          ]
         },
         "operator": {
           "type": "string",
-          "title": "Required. Operator to apply"
+          "title": "Required. Operator to apply",
+          "required": [
+            "operator"
+          ]
         },
         "value": {
           "type": "string",
@@ -1798,7 +1802,10 @@
         },
         "effect": {
           "type": "string",
-          "title": "Required. Effect"
+          "title": "Required. Effect",
+          "required": [
+            "effect"
+          ]
         }
       },
       "title": "Toleration for the compute template",
@@ -1814,7 +1821,6 @@
         "jobs": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoRayJob"
           },
           "readOnly": true
@@ -1832,7 +1838,6 @@
         "jobs": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoRayJob"
           },
           "readOnly": true
@@ -1849,23 +1854,38 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Required input field. Unique job name provided by user."
+          "description": "Required input field. Unique job name provided by user.",
+          "required": [
+            "name"
+          ]
         },
         "namespace": {
           "type": "string",
-          "title": "Required input field. job namespace provided by user"
+          "title": "Required input field. job namespace provided by user",
+          "required": [
+            "namespace"
+          ]
         },
         "user": {
           "type": "string",
-          "description": "Required field. This field indicates the user who owns the job."
+          "description": "Required field. This field indicates the user who owns the job.",
+          "required": [
+            "user"
+          ]
         },
         "version": {
           "type": "string",
-          "title": "Required field. This field indicates Ray version. Should be the same as image version"
+          "title": "Required field. This field indicates Ray version. Should be the same as image version",
+          "required": [
+            "version"
+          ]
         },
         "entrypoint": {
           "type": "string",
-          "title": "Required field. The entrypoint of the RayJob"
+          "title": "Required field. The entrypoint of the RayJob",
+          "required": [
+            "entrypoint"
+          ]
         },
         "metadata": {
           "type": "object",
@@ -1984,7 +2004,10 @@
       "properties": {
         "image": {
           "type": "string",
-          "title": "Required base image for job submitter. Make sure that Python/Ray version\nof the image corresponds to the one used in the cluster"
+          "title": "Required base image for job submitter. Make sure that Python/Ray version\nof the image corresponds to the one used in the cluster",
+          "required": [
+            "image"
+          ]
         },
         "cpu": {
           "type": "string",
@@ -2005,7 +2028,6 @@
         "services": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoRayService"
           },
           "description": "A list of services.",
@@ -2030,7 +2052,6 @@
         "services": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoRayService"
           },
           "title": "List of services",
@@ -2054,19 +2075,31 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Required input field. Unique ray service name provided by user."
+          "description": "Required input field. Unique ray service name provided by user.",
+          "required": [
+            "name"
+          ]
         },
         "namespace": {
           "type": "string",
-          "title": "Required input field. ray service namespace provided by user"
+          "title": "Required input field. ray service namespace provided by user",
+          "required": [
+            "namespace"
+          ]
         },
         "user": {
           "type": "string",
-          "description": "Required field. This field indicates the user who owns the ray service."
+          "description": "Required field. This field indicates the user who owns the ray service.",
+          "required": [
+            "user"
+          ]
         },
         "version": {
           "type": "string",
-          "title": "Required field. This field indicates Ray version. Should be the same as image version"
+          "title": "Required field. This field indicates Ray version. Should be the same as image version",
+          "required": [
+            "version"
+          ]
         },
         "serveConfigV2": {
           "type": "string",
@@ -2088,8 +2121,7 @@
         },
         "rayServiceStatus": {
           "$ref": "#/definitions/protoRayServiceStatus",
-          "description": "Output. The status for the ray service.",
-          "readOnly": true
+          "description": "Output. The status for the ray service."
         },
         "createdAt": {
           "type": "string",
@@ -2108,8 +2140,7 @@
         "name",
         "namespace",
         "user",
-        "version",
-        "clusterSpec"
+        "version"
       ]
     },
     "protoRayServiceEvent": {
@@ -2171,7 +2202,6 @@
         "serveDeploymentStatus": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoServeDeploymentStatus"
           },
           "description": "(Deprecated) The status for each deployment."
@@ -2179,7 +2209,6 @@
         "rayServiceEvents": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoRayServiceEvent"
           },
           "description": "The related event for the ray service."
@@ -2202,7 +2231,6 @@
         "serveApplicationStatus": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoServeApplicationStatus"
           },
           "title": "All ray serve application statuses"
@@ -2227,7 +2255,6 @@
         "serveDeploymentStatus": {
           "type": "array",
           "items": {
-            "type": "object",
             "$ref": "#/definitions/protoServeDeploymentStatus"
           },
           "title": "All ray serve deployment statuses in this application"

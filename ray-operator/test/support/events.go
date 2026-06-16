@@ -3,7 +3,6 @@ package support
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -123,9 +122,9 @@ func renderEventContent(keys []string, dataMaps []map[string]string) ([]byte, er
 }
 
 func getWhitespaceStr(size int) string {
-	var whiteSpaceStr strings.Builder
-	for range size {
-		whiteSpaceStr.WriteString(" ")
+	whiteSpaceStr := ""
+	for i := 0; i < size; i++ {
+		whiteSpaceStr += " "
 	}
-	return whiteSpaceStr.String()
+	return whiteSpaceStr
 }

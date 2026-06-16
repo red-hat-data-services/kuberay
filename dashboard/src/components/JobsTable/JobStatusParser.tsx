@@ -5,26 +5,25 @@ import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import BlockIcon from "@mui/icons-material/Block";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import PendingRoundedIcon from "@mui/icons-material/PendingRounded";
-import { JobStatus } from "@/types/v2/rayjob";
 
 // There are two statues: JobStatus and JobDeploymentStatus. According to Ray CRD
 // https://github.com/ray-project/kuberay/blob/master/ray-operator/apis/ray/v1/rayjob_types.go
 // These are the enums:
 /*
   JobStatusNew       JobStatus = ""
-  JobStatusPending   JobStatus = "PENDING"
-  JobStatusRunning   JobStatus = "RUNNING"
-  JobStatusStopped   JobStatus = "STOPPED"
-  JobStatusSucceeded JobStatus = "SUCCEEDED"
-  JobStatusFailed    JobStatus = "FAILED"
+	JobStatusPending   JobStatus = "PENDING"
+	JobStatusRunning   JobStatus = "RUNNING"
+	JobStatusStopped   JobStatus = "STOPPED"
+	JobStatusSucceeded JobStatus = "SUCCEEDED"
+	JobStatusFailed    JobStatus = "FAILED"
 
   JobDeploymentStatusNew          JobDeploymentStatus = ""
-  JobDeploymentStatusInitializing JobDeploymentStatus = "Initializing"
-  JobDeploymentStatusRunning      JobDeploymentStatus = "Running"
-  JobDeploymentStatusComplete     JobDeploymentStatus = "Complete"
-  JobDeploymentStatusFailed       JobDeploymentStatus = "Failed"
-  JobDeploymentStatusSuspending   JobDeploymentStatus = "Suspending"
-  JobDeploymentStatusSuspended    JobDeploymentStatus = "Suspended"
+	JobDeploymentStatusInitializing JobDeploymentStatus = "Initializing"
+	JobDeploymentStatusRunning      JobDeploymentStatus = "Running"
+	JobDeploymentStatusComplete     JobDeploymentStatus = "Complete"
+	JobDeploymentStatusFailed       JobDeploymentStatus = "Failed"
+	JobDeploymentStatusSuspending   JobDeploymentStatus = "Suspending"
+	JobDeploymentStatusSuspended    JobDeploymentStatus = "Suspended"
 */
 // However, it seems like we also have WaitForDashboardReady status... which
 // is not in the Kuberay codebase.
@@ -35,20 +34,18 @@ const capitalize = (status: string) =>
   status.charAt(0) + status.toLowerCase().slice(1);
 
 // Return the jobStatus.
-export const getJobStatusDisplay = (status: JobStatus) => {
-  return capitalize(status);
+export const getJobStatus = (jobStatus: string) => {
+  return capitalize(jobStatus);
 };
 
-export const getJobStatusColor = (status: JobStatus): ColorPaletteProp => {
-  const statusColorMap: Record<string, ColorPaletteProp> = {
+export const getJobStatusColor = (status: string) => {
+  return {
     PENDING: "warning",
     SUCCEEDED: "success",
     FAILED: "danger",
     RUNNING: "primary",
     STOPPED: "danger",
-    WAITING: "warning",
-  };
-  return statusColorMap[status] ?? "neutral";
+  }[status] as ColorPaletteProp;
 };
 
 export const getJobStatusIcon = (status: string) => {
@@ -62,7 +59,6 @@ export const getJobStatusIcon = (status: string) => {
     PENDING: <PendingRoundedIcon />,
     STOPPED: <BlockIcon />,
     FAILED: <BlockIcon />,
-    UNKNOWN: <PendingRoundedIcon />,
     RUNNING: (
       <AutorenewRoundedIcon
         sx={{

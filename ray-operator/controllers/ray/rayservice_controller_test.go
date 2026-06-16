@@ -26,7 +26,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -35,7 +34,6 @@ import (
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
-	utiltypes "github.com/ray-project/kuberay/ray-operator/controllers/ray/utils/types"
 	"github.com/ray-project/kuberay/ray-operator/test/support"
 )
 
@@ -81,7 +79,7 @@ func rayServiceTemplate(name string, namespace string, serveAppName string) *ray
 		Spec: rayv1.RayServiceSpec{
 			ServeConfigV2: serveConfigV2,
 			UpgradeStrategy: &rayv1.RayServiceUpgradeStrategy{
-				Type: ptr.To(rayv1.RayServiceNewCluster),
+				Type: ptr.To(rayv1.NewCluster),
 			},
 			RayClusterSpec: rayv1.RayClusterSpec{
 				RayVersion: support.GetRayVersion(),
@@ -120,29 +118,18 @@ func rayServiceTemplate(name string, namespace string, serveAppName string) *ray
 	}
 }
 
-func endpointSliceTemplate(name string, namespace string) *discoveryv1.EndpointSlice {
-	return &discoveryv1.EndpointSlice{
+func endpointsTemplate(name string, namespace string) *corev1.Endpoints {
+	return &corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
-			Labels: map[string]string{
-				discoveryv1.LabelServiceName: name,
-			},
 		},
-		AddressType: discoveryv1.AddressTypeIPv4,
-		Endpoints: []discoveryv1.Endpoint{
+		Subsets: []corev1.EndpointSubset{
 			{
-				Addresses: []string{"10.9.8.7"},
-				Conditions: discoveryv1.EndpointConditions{
-					Ready: ptr.To(true),
-				},
-				// TargetRef should always be set in production to identify the backing Pod.
-				// This allows proper deduplication when a Pod appears in multiple EndpointSlices.
-				TargetRef: &corev1.ObjectReference{
-					Kind:      "Pod",
-					Namespace: namespace,
-					Name:      "test-pod-1",
-					UID:       "test-uid-12345",
+				Addresses: []corev1.EndpointAddress{
+					{
+						IP: "10.9.8.7",
+					},
 				},
 			},
 		},
@@ -287,7 +274,7 @@ var _ = Context("RayService env tests", func() {
 		ctx := context.Background()
 		var rayService *rayv1.RayService
 		var rayCluster *rayv1.RayCluster
-		var endpointSlice *discoveryv1.EndpointSlice
+		var endpoints *corev1.Endpoints
 		serveAppName := "app1"
 		namespace := "default"
 
@@ -375,9 +362,9 @@ var _ = Context("RayService env tests", func() {
 			// TODO: Verify the serve service by checking labels and annotations.
 
 			By("The RayServiceReady condition should be true when the number of endpoints is greater than 0")
-			endpointSlice = endpointSliceTemplate(utils.GenerateServeServiceName(rayService.Name), namespace)
-			err = k8sClient.Create(ctx, endpointSlice)
-			Expect(err).NotTo(HaveOccurred(), "failed to create EndpointSlice resource")
+			endpoints = endpointsTemplate(utils.GenerateServeServiceName(rayService.Name), namespace)
+			err = k8sClient.Create(ctx, endpoints)
+			Expect(err).NotTo(HaveOccurred(), "failed to create Endpoints resource")
 			Eventually(func() int32 {
 				if err := k8sClient.Get(ctx, client.ObjectKey{Name: rayService.Name, Namespace: namespace}, rayService); err != nil {
 					return 0
@@ -391,9 +378,9 @@ var _ = Context("RayService env tests", func() {
 			By(fmt.Sprintf("Delete the RayService custom resource %v", rayService.Name))
 			err := k8sClient.Delete(ctx, rayService)
 			Expect(err).NotTo(HaveOccurred(), "failed to delete the test RayService resource")
-			By(fmt.Sprintf("Delete the EndpointSlice %v", endpointSlice.Name))
-			err = k8sClient.Delete(ctx, endpointSlice)
-			Expect(err).NotTo(HaveOccurred(), "failed to delete the test EndpointSlice resource")
+			By(fmt.Sprintf("Delete the Endpoints %v", endpoints.Name))
+			err = k8sClient.Delete(ctx, endpoints)
+			Expect(err).NotTo(HaveOccurred(), "failed to delete the test Endpoints resource")
 		})
 
 		When("Testing in-place update: updating the serveConfigV2", Ordered, func() {
@@ -418,7 +405,7 @@ var _ = Context("RayService env tests", func() {
 
 				// Update the fake Ray dashboard client to return serve application statuses with the new serve application.
 				healthyStatus := generateServeStatus(rayv1.DeploymentStatusEnum.HEALTHY, rayv1.ApplicationStatusEnum.RUNNING)
-				fakeRayDashboardClient.SetMultiApplicationStatuses(map[string]*utiltypes.ServeApplicationStatus{newServeAppName: &healthyStatus})
+				fakeRayDashboardClient.SetMultiApplicationStatuses(map[string]*utils.ServeApplicationStatus{newServeAppName: &healthyStatus})
 			})
 
 			It("New serve application should be shown in the RayService status", func() {

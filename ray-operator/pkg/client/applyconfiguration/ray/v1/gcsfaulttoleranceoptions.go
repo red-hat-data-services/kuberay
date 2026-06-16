@@ -4,8 +4,6 @@ package v1
 
 // GcsFaultToleranceOptionsApplyConfiguration represents a declarative configuration of the GcsFaultToleranceOptions type for use
 // with apply.
-//
-// GcsFaultToleranceOptions contains configs for GCS FT
 type GcsFaultToleranceOptionsApplyConfiguration struct {
 	RedisUsername            *RedisCredentialApplyConfiguration `json:"redisUsername,omitempty"`
 	RedisPassword            *RedisCredentialApplyConfiguration `json:"redisPassword,omitempty"`

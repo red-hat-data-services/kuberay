@@ -9,7 +9,7 @@ interface PaginationParams {
 }
 
 const range = (start: number, end: number) => {
-  const length = end - start + 1;
+  let length = end - start + 1;
   return Array.from({ length }, (_, idx) => idx + start);
 };
 
@@ -42,7 +42,7 @@ export const usePagination = ({
     const leftSiblingIndex = Math.max(currentPage - siblingCount, 1);
     const rightSiblingIndex = Math.min(
       currentPage + siblingCount,
-      totalPageCount,
+      totalPageCount
     );
 
     /*
@@ -61,24 +61,24 @@ export const usePagination = ({
        */
     if (!shouldShowLeftDots && shouldShowRightDots) {
       // 3 because we want to show the page itself and 2 surrounding elements in addition to siblings
-      const leftItemCount = 3 + 2 * siblingCount;
-      const leftRange = range(1, leftItemCount);
+      let leftItemCount = 3 + 2 * siblingCount;
+      let leftRange = range(1, leftItemCount);
 
       return [...leftRange, DOTS, totalPageCount];
     }
 
     if (shouldShowLeftDots && !shouldShowRightDots) {
-      const rightItemCount = 3 + 2 * siblingCount;
-      const rightRange = range(
+      let rightItemCount = 3 + 2 * siblingCount;
+      let rightRange = range(
         totalPageCount - rightItemCount + 1,
-        totalPageCount,
+        totalPageCount
       );
 
       return [firstPageIndex, DOTS, ...rightRange];
     }
 
     if (shouldShowLeftDots && shouldShowRightDots) {
-      const middleRange = range(leftSiblingIndex, rightSiblingIndex);
+      let middleRange = range(leftSiblingIndex, rightSiblingIndex);
       return [firstPageIndex, DOTS, ...middleRange, DOTS, lastPageIndex];
     }
   }, [totalCount, pageSize, currentPage, siblingCount]);

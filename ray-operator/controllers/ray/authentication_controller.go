@@ -1169,17 +1169,13 @@ func (r *AuthenticationController) SetupWithManager(mgr ctrl.Manager) error {
 		predicate.AnnotationChangedPredicate{},
 	)
 
-	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
+	return ctrl.NewControllerManagedBy(mgr).
 		// PRIMARY: Watch RayClusters
 		For(&rayv1.RayCluster{}, builder.WithPredicates(rayClusterPredicate)).
 		// OWNED: Watch resources owned by RayClusters
 		Owns(&corev1.ServiceAccount{}).
-		Owns(&corev1.Service{})
-	if r.options.IsOpenShift {
-		ctrlBuilder = ctrlBuilder.Owns(&routev1.Route{})
-	}
-
-	return ctrlBuilder.
+		Owns(&corev1.Service{}).
+		Owns(&routev1.Route{}).
 		// // SECONDARY: Watch cluster-wide auth config and map to all RayClusters
 		// Watches(
 		// 	&configv1.Authentication{},

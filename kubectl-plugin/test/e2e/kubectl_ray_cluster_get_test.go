@@ -47,7 +47,7 @@ var _ = Describe("Calling ray plugin `get` command", func() {
 		}
 
 		expectedTestResultTable.Rows = append(expectedTestResultTable.Rows, v1.TableRow{
-			Cells: []any{
+			Cells: []interface{}{
 				"raycluster-kuberay",
 				namespace,
 				"1",
@@ -55,7 +55,7 @@ var _ = Describe("Calling ray plugin `get` command", func() {
 				"2",
 				"0",
 				"0",
-				"6Gi",
+				"3G",
 				rayv1.RayClusterProvisioned,
 				rayv1.Ready,
 			},
