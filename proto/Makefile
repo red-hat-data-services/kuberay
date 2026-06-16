@@ -2,16 +2,17 @@
 
 IMAGE_NAME ?= kuberay/proto-generator
 IMAGE_TAG ?= $(shell git rev-parse HEAD)
+PREBUILT_REMOTE_IMAGE ?= ${IMAGE_NAME}:8210e17c28b3b373449f99561f10534e13d35969
 
 OUTPUT_MODE=import
 TMP_OUTPUT=/tmp
 
 .PHONY: generate
-generate: build-image
+generate:
 	docker run -it --rm \
 		--user $$(id -u):$$(id -g) \
 		--mount type=bind,source="$$(pwd)/..",target=/go/src/github.com/ray-project/kuberay/ \
-		$(IMAGE_NAME):$(IMAGE_TAG) /go/src/github.com/ray-project/kuberay/proto/hack/generate.sh
+		$(PREBUILT_REMOTE_IMAGE) /go/src/github.com/ray-project/kuberay/proto/hack/generate.sh
 
 .PHONY: build-image
 build-image:

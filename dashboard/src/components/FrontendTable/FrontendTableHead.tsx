@@ -1,5 +1,6 @@
 "use client";
 // Mostly from https://mui.com/joy-ui/react-table/#sort-and-selection
+import { JobRow } from "@/types/rayjob";
 import { Order } from "@/types/table";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import { Checkbox } from "@mui/joy";
@@ -23,7 +24,6 @@ interface FrontendTableHeadProps<T> {
   orderBy: string;
   rowCount: number;
   headCells: readonly HeadCell<T>[];
-  disableSelection?: boolean;
 }
 
 export default function FrontendTableHead<T>(props: FrontendTableHeadProps<T>) {
@@ -35,7 +35,6 @@ export default function FrontendTableHead<T>(props: FrontendTableHeadProps<T>) {
     orderBy,
     rowCount,
     headCells,
-    disableSelection = false,
   } = props;
   const createSortHandler =
     (property: keyof T & string) => (event: React.MouseEvent<unknown>) => {
@@ -46,20 +45,18 @@ export default function FrontendTableHead<T>(props: FrontendTableHeadProps<T>) {
     <thead>
       <tr>
         <th style={{ width: 48, textAlign: "center", padding: "12px 6px" }}>
-          {!disableSelection && (
-            <Checkbox
-              size="sm"
-              indeterminate={numSelected > 0 && numSelected < rowCount}
-              checked={rowCount > 0 && numSelected === rowCount}
-              onChange={onSelectAllClick}
-              slotProps={{
-                input: {
-                  "aria-label": "select all jobs",
-                },
-              }}
-              sx={{ verticalAlign: "text-bottom" }}
-            />
-          )}
+          <Checkbox
+            size="sm"
+            indeterminate={numSelected > 0 && numSelected < rowCount}
+            checked={rowCount > 0 && numSelected === rowCount}
+            onChange={onSelectAllClick}
+            slotProps={{
+              input: {
+                "aria-label": "select all jobs",
+              },
+            }}
+            sx={{ verticalAlign: "text-bottom" }}
+          />
         </th>
         {headCells.map((headCell) => {
           const active = orderBy === headCell.id;

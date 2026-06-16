@@ -13,7 +13,6 @@ import (
 type RayV1Interface interface {
 	RESTClient() rest.Interface
 	RayClustersGetter
-	RayCronJobsGetter
 	RayJobsGetter
 	RayServicesGetter
 }
@@ -25,10 +24,6 @@ type RayV1Client struct {
 
 func (c *RayV1Client) RayClusters(namespace string) RayClusterInterface {
 	return newRayClusters(c, namespace)
-}
-
-func (c *RayV1Client) RayCronJobs(namespace string) RayCronJobInterface {
-	return newRayCronJobs(c, namespace)
 }
 
 func (c *RayV1Client) RayJobs(namespace string) RayJobInterface {

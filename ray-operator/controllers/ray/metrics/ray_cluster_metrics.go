@@ -7,7 +7,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -17,7 +16,7 @@ import (
 
 //go:generate mockgen -destination=mocks/ray_cluster_metrics_mock.go -package=mocks github.com/ray-project/kuberay/ray-operator/controllers/ray/metrics RayClusterMetricsObserver
 type RayClusterMetricsObserver interface {
-	ObserveRayClusterProvisionedDuration(name, namespace string, uid types.UID, duration float64)
+	ObserveRayClusterProvisionedDuration(name, namespace string, duration float64)
 }
 
 // RayClusterMetricsManager implements the prometheus.Collector and RayClusterMetricsObserver interface to collect ray cluster metrics.
@@ -37,7 +36,7 @@ func NewRayClusterMetricsManager(ctx context.Context, client client.Client) *Ray
 				Name: "kuberay_cluster_provisioned_duration_seconds",
 				Help: "The time, in seconds, when a RayCluster's `RayClusterProvisioned` status transitions from false (or unset) to true",
 			},
-			[]string{"name", "namespace", "uid"},
+			[]string{"name", "namespace"},
 		),
 		// rayClusterInfo is a gauge metric that indicates the metadata information about RayCluster custom resources.
 		// The `owner_kind` label indicates the CRD type that originated the RayCluster.
@@ -48,13 +47,13 @@ func NewRayClusterMetricsManager(ctx context.Context, client client.Client) *Ray
 		rayClusterInfo: prometheus.NewDesc(
 			"kuberay_cluster_info",
 			"Metadata information about RayCluster custom resources",
-			[]string{"name", "namespace", "uid", "owner_kind"},
+			[]string{"name", "namespace", "owner_kind"},
 			nil,
 		),
 		rayClusterConditionProvisioned: prometheus.NewDesc(
 			"kuberay_cluster_condition_provisioned",
 			"Indicates whether the RayCluster is provisioned",
-			[]string{"name", "namespace", "uid", "condition"},
+			[]string{"name", "namespace", "condition"},
 			nil,
 		),
 		client: client,
@@ -86,14 +85,8 @@ func (r *RayClusterMetricsManager) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (r *RayClusterMetricsManager) ObserveRayClusterProvisionedDuration(name, namespace string, uid types.UID, duration float64) {
-	r.rayClusterProvisionedDurationSeconds.WithLabelValues(name, namespace, string(uid)).Set(duration)
-}
-
-// DeleteRayClusterMetrics removes metrics that belongs to the specified RayCluster.
-func (r *RayClusterMetricsManager) DeleteRayClusterMetrics(name, namespace string) {
-	numCleanedUpMetrics := r.rayClusterProvisionedDurationSeconds.DeletePartialMatch(prometheus.Labels{"name": name, "namespace": namespace})
-	r.log.Info("Cleaned up expired RayCluster metric", "name", name, "namespace", namespace, "numCleanedUpMetrics", numCleanedUpMetrics)
+func (r *RayClusterMetricsManager) ObserveRayClusterProvisionedDuration(name, namespace string, duration float64) {
+	r.rayClusterProvisionedDurationSeconds.WithLabelValues(name, namespace).Set(duration)
 }
 
 func (r *RayClusterMetricsManager) collectRayClusterInfo(cluster *rayv1.RayCluster, ch chan<- prometheus.Metric) {
@@ -108,7 +101,6 @@ func (r *RayClusterMetricsManager) collectRayClusterInfo(cluster *rayv1.RayClust
 		1,
 		cluster.Name,
 		cluster.Namespace,
-		string(cluster.UID),
 		ownerKind,
 	)
 }
@@ -120,7 +112,6 @@ func (r *RayClusterMetricsManager) collectRayClusterConditionProvisioned(cluster
 		1,
 		cluster.Name,
 		cluster.Namespace,
-		string(cluster.UID),
 		strconv.FormatBool(meta.IsStatusConditionTrue(cluster.Status.Conditions, string(rayv1.RayClusterProvisioned))),
 	)
 }

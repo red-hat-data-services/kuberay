@@ -8,12 +8,15 @@ import (
 
 	"github.com/ray-project/kuberay/ray-operator/apis/config/v1alpha1"
 	schedulerinterface "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/interface"
-	kaischeduler "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/kai-scheduler"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/volcano"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/yunikorn"
 )
 
 func TestGetSchedulerFactory(t *testing.T) {
+	DefaultFactory := &schedulerinterface.DefaultBatchSchedulerFactory{}
+	VolcanoFactory := &volcano.VolcanoBatchSchedulerFactory{}
+	YuniKornFactory := &yunikorn.YuniKornSchedulerFactory{}
+
 	type args struct {
 		rayConfigs v1alpha1.Configuration
 	}
@@ -31,7 +34,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       "",
 				},
 			},
-			want: reflect.TypeFor[*schedulerinterface.DefaultBatchSchedulerFactory](),
+			want: reflect.TypeOf(DefaultFactory),
 		},
 		{
 			name: "enableBatchScheduler=false, batchScheduler not set",
@@ -40,7 +43,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					EnableBatchScheduler: false,
 				},
 			},
-			want: reflect.TypeFor[*schedulerinterface.DefaultBatchSchedulerFactory](),
+			want: reflect.TypeOf(DefaultFactory),
 		},
 		{
 			name: "enableBatchScheduler=false, batchScheduler set to yunikorn",
@@ -50,7 +53,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       yunikorn.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*yunikorn.YuniKornSchedulerFactory](),
+			want: reflect.TypeOf(YuniKornFactory),
 		},
 		{
 			name: "enableBatchScheduler=false, batchScheduler set to volcano",
@@ -60,17 +63,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       volcano.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*volcano.VolcanoBatchSchedulerFactory](),
-		},
-		{
-			name: "enableBatchScheduler=false, batchScheduler set to kai-scheduler",
-			args: args{
-				rayConfigs: v1alpha1.Configuration{
-					EnableBatchScheduler: false,
-					BatchScheduler:       kaischeduler.GetPluginName(),
-				},
-			},
-			want: reflect.TypeFor[*kaischeduler.KaiSchedulerFactory](),
+			want: reflect.TypeOf(VolcanoFactory),
 		},
 		{
 			name: "enableBatchScheduler not set, batchScheduler set to yunikorn",
@@ -79,7 +72,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler: yunikorn.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*yunikorn.YuniKornSchedulerFactory](),
+			want: reflect.TypeOf(YuniKornFactory),
 		},
 		{
 			name: "enableBatchScheduler not set, batchScheduler set to volcano",
@@ -88,16 +81,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler: volcano.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*volcano.VolcanoBatchSchedulerFactory](),
-		},
-		{
-			name: "enableBatchScheduler not set, batchScheduler set to kai-scheduler",
-			args: args{
-				rayConfigs: v1alpha1.Configuration{
-					BatchScheduler: kaischeduler.GetPluginName(),
-				},
-			},
-			want: reflect.TypeFor[*kaischeduler.KaiSchedulerFactory](),
+			want: reflect.TypeOf(VolcanoFactory),
 		},
 		{
 			name: "enableBatchScheduler not set, batchScheduler set to unknown value",
@@ -117,7 +101,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       yunikorn.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*volcano.VolcanoBatchSchedulerFactory](),
+			want: reflect.TypeOf(VolcanoFactory),
 		},
 		{
 			// for backwards compatibility, if enableBatchScheduler=true, always use volcano
@@ -128,7 +112,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       volcano.GetPluginName(),
 				},
 			},
-			want: reflect.TypeFor[*volcano.VolcanoBatchSchedulerFactory](),
+			want: reflect.TypeOf(VolcanoFactory),
 		},
 		{
 			// for backwards compatibility, if enableBatchScheduler=true, always use volcano
@@ -139,7 +123,7 @@ func TestGetSchedulerFactory(t *testing.T) {
 					BatchScheduler:       "",
 				},
 			},
-			want: reflect.TypeFor[*volcano.VolcanoBatchSchedulerFactory](),
+			want: reflect.TypeOf(VolcanoFactory),
 		},
 	}
 

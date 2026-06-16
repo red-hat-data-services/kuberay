@@ -130,6 +130,7 @@ func TestCreateServiceV2(t *testing.T) {
 	}
 	// Execute tests sequentially
 	for _, tc := range tests {
+		tc := tc // capture range variable
 		t.Run(tc.Name, func(t *testing.T) {
 			actualService, actualRPCStatus, err := tCtx.GetRayAPIServerClient().CreateRayService(tc.Input)
 			if tc.ExpectedError == nil {
@@ -188,6 +189,7 @@ func TestDeleteService(t *testing.T) {
 	}
 	// Execute tests sequentially
 	for _, tc := range tests {
+		tc := tc // capture range variable
 		t.Run(tc.Name, func(t *testing.T) {
 			actualRPCStatus, err := tCtx.GetRayAPIServerClient().DeleteRayService(tc.Input)
 			if tc.ExpectedError == nil {
@@ -238,7 +240,7 @@ func TestGetAllServicesWithPagination(t *testing.T) {
 	expectedServices := make([]targetService, 0, totalServices)
 
 	// Create services for each namespace
-	for range numberOfNamespaces {
+	for i := 0; i < numberOfNamespaces; i++ {
 		tCtx, err := NewEnd2EndTestingContext(t)
 		require.NoError(t, err, "No error expected when creating testing context")
 
@@ -247,7 +249,7 @@ func TestGetAllServicesWithPagination(t *testing.T) {
 			tCtx.DeleteComputeTemplate(t)
 		})
 
-		for range numberOfService {
+		for j := 0; j < numberOfService; j++ {
 			testServiceRequest := createTestServiceV2(t, tCtx)
 			t.Cleanup(func() {
 				tCtx.DeleteRayService(t, testServiceRequest.Service.Name)
@@ -272,7 +274,7 @@ func TestGetAllServicesWithPagination(t *testing.T) {
 			gotServices[expectedService] = false
 		}
 
-		for i := range totalServices {
+		for i := 0; i < totalServices; i++ {
 			response, actualRPCStatus, err := tCtx.GetRayAPIServerClient().ListAllRayServices(&api.ListAllRayServicesRequest{
 				PageToken: pageToken,
 				PageSize:  int32(1),
@@ -398,7 +400,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 		tCtx.DeleteComputeTemplate(t)
 	})
 
-	for range serviceCount {
+	for ii := 0; ii < serviceCount; ii++ {
 		testServiceRequest := createTestServiceV2(t, tCtx)
 		t.Cleanup(func() {
 			tCtx.DeleteRayService(t, testServiceRequest.Service.Name)
@@ -412,7 +414,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 		gotServices := []bool{false, false}
 
 		pageToken := ""
-		for ii := range serviceCount {
+		for ii := 0; ii < serviceCount; ii++ {
 			response, actualRPCStatus, err := tCtx.GetRayAPIServerClient().ListRayServices(&api.ListRayServicesRequest{
 				Namespace: tCtx.GetNamespaceName(),
 				PageToken: pageToken,
@@ -426,7 +428,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 			require.Len(t, response.Services, 1)
 
 			for _, curService := range response.Services {
-				for jj := range serviceCount {
+				for jj := 0; jj < serviceCount; jj++ {
 					if expectedServiceNames[jj] == curService.Name {
 						gotServices[jj] = true
 						break
@@ -444,7 +446,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 		}
 
 		// Check all services created have been returned.
-		for idx := range serviceCount {
+		for idx := 0; idx < serviceCount; idx++ {
 			require.True(t, gotServices[idx],
 				"ListServices did not return expected services %s",
 				expectedServiceNames[idx])
@@ -470,7 +472,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 		require.Len(t, response.Services, serviceCount)
 		require.Empty(t, pageToken, "Page token should be empty")
 		for _, curService := range response.Services {
-			for jj := range serviceCount {
+			for jj := 0; jj < serviceCount; jj++ {
 				if expectedServiceNames[jj] == curService.Name {
 					gotServices[jj] = true
 					break
@@ -479,7 +481,7 @@ func TestGetServicesInNamespaceWithPagination(t *testing.T) {
 		}
 
 		// Check all services created have been returned.
-		for idx := range serviceCount {
+		for idx := 0; idx < serviceCount; idx++ {
 			require.True(t, gotServices[idx],
 				"ListServices did not return expected services %s",
 				expectedServiceNames[idx])
@@ -539,6 +541,7 @@ func TestGetService(t *testing.T) {
 	}
 	// Execute tests sequentially
 	for _, tc := range tests {
+		tc := tc // capture range variable
 		t.Run(tc.Name, func(t *testing.T) {
 			actualService, actualRPCStatus, err := tCtx.GetRayAPIServerClient().GetRayService(tc.Input)
 			if tc.ExpectedError == nil {

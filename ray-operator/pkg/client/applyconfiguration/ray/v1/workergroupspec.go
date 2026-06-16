@@ -8,40 +8,17 @@ import (
 
 // WorkerGroupSpecApplyConfiguration represents a declarative configuration of the WorkerGroupSpec type for use
 // with apply.
-//
-// WorkerGroupSpec are the specs for the worker pods
 type WorkerGroupSpecApplyConfiguration struct {
-	// Suspend indicates whether a worker group should be suspended.
-	// A suspended worker group will have all pods deleted.
-	// This is not a user-facing API and is only used by RayJob DeletionStrategy.
-	Suspend *bool `json:"suspend,omitempty"`
-	// we can have multiple worker groups, we distinguish them by name
-	GroupName *string `json:"groupName,omitempty"`
-	// Replicas is the number of desired Pods for this worker group. See https://github.com/ray-project/kuberay/pull/1443 for more details about the reason for making this field optional.
-	Replicas *int32 `json:"replicas,omitempty"`
-	// MinReplicas denotes the minimum number of desired Pods for this worker group.
-	MinReplicas *int32 `json:"minReplicas,omitempty"`
-	// MaxReplicas denotes the maximum number of desired Pods for this worker group, and the default value is maxInt32.
-	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
-	// IdleTimeoutSeconds denotes the number of seconds to wait before the v2 autoscaler terminates an idle worker pod of this type.
-	// This value is only used with the Ray Autoscaler enabled and defaults to the value set by the AutoscalingConfig if not specified for this worker group.
-	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
-	// Resources specifies the resource quantities for this worker group.
-	// These values override the resources passed to `rayStartParams` for the group, but
-	// have no effect on the resources set at the K8s Pod container level.
-	Resources map[string]string `json:"resources,omitempty"`
-	// Labels specifies the Ray node labels for this worker group.
-	// These labels will also be added to the Pods of this worker group and override the `--labels`
-	// argument passed to `rayStartParams`.
-	Labels map[string]string `json:"labels,omitempty"`
-	// RayStartParams are the params of the start command: address, object-store-memory, ...
-	RayStartParams map[string]string `json:"rayStartParams,omitempty"`
-	// Template is a pod template for the worker
-	Template *corev1.PodTemplateSpecApplyConfiguration `json:"template,omitempty"`
-	// ScaleStrategy defines which pods to remove
-	ScaleStrategy *ScaleStrategyApplyConfiguration `json:"scaleStrategy,omitempty"`
-	// NumOfHosts denotes the number of hosts to create per replica. The default value is 1.
-	NumOfHosts *int32 `json:"numOfHosts,omitempty"`
+	Suspend            *bool                                     `json:"suspend,omitempty"`
+	GroupName          *string                                   `json:"groupName,omitempty"`
+	Replicas           *int32                                    `json:"replicas,omitempty"`
+	MinReplicas        *int32                                    `json:"minReplicas,omitempty"`
+	MaxReplicas        *int32                                    `json:"maxReplicas,omitempty"`
+	IdleTimeoutSeconds *int32                                    `json:"idleTimeoutSeconds,omitempty"`
+	RayStartParams     map[string]string                         `json:"rayStartParams,omitempty"`
+	Template           *corev1.PodTemplateSpecApplyConfiguration `json:"template,omitempty"`
+	ScaleStrategy      *ScaleStrategyApplyConfiguration          `json:"scaleStrategy,omitempty"`
+	NumOfHosts         *int32                                    `json:"numOfHosts,omitempty"`
 }
 
 // WorkerGroupSpecApplyConfiguration constructs a declarative configuration of the WorkerGroupSpec type for use with
@@ -95,34 +72,6 @@ func (b *WorkerGroupSpecApplyConfiguration) WithMaxReplicas(value int32) *Worker
 // If called multiple times, the IdleTimeoutSeconds field is set to the value of the last call.
 func (b *WorkerGroupSpecApplyConfiguration) WithIdleTimeoutSeconds(value int32) *WorkerGroupSpecApplyConfiguration {
 	b.IdleTimeoutSeconds = &value
-	return b
-}
-
-// WithResources puts the entries into the Resources field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, the entries provided by each call will be put on the Resources field,
-// overwriting an existing map entries in Resources field with the same key.
-func (b *WorkerGroupSpecApplyConfiguration) WithResources(entries map[string]string) *WorkerGroupSpecApplyConfiguration {
-	if b.Resources == nil && len(entries) > 0 {
-		b.Resources = make(map[string]string, len(entries))
-	}
-	for k, v := range entries {
-		b.Resources[k] = v
-	}
-	return b
-}
-
-// WithLabels puts the entries into the Labels field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, the entries provided by each call will be put on the Labels field,
-// overwriting an existing map entries in Labels field with the same key.
-func (b *WorkerGroupSpecApplyConfiguration) WithLabels(entries map[string]string) *WorkerGroupSpecApplyConfiguration {
-	if b.Labels == nil && len(entries) > 0 {
-		b.Labels = make(map[string]string, len(entries))
-	}
-	for k, v := range entries {
-		b.Labels[k] = v
-	}
 	return b
 }
 

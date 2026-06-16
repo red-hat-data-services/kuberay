@@ -1,7 +1,0 @@
-title = "KubeRay gitleaks config"
-
-[allowlist]
-paths = [
-  '''dashboard/\.yarn/releases/.*''',
-  '''ray-operator/test/support/redis\.go''',
-]
