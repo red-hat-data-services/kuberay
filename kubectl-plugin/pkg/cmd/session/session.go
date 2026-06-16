@@ -194,9 +194,11 @@ func (options *SessionOptions) Run(ctx context.Context, factory cmdutil.Factory)
 	fmt.Println()
 
 	var wg sync.WaitGroup
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		for {
-			portforwardCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs...)
+			portforwardCmd := exec.Command("kubectl", kubectlArgs...)
 			portforwardCmd.Stdout = options.ioStreams.Out
 			portforwardCmd.Stderr = options.ioStreams.ErrOut
 
@@ -210,7 +212,7 @@ func (options *SessionOptions) Run(ctx context.Context, factory cmdutil.Factory)
 			fmt.Printf("failed to port-forward: %v. Retrying in %v ...\n\n", err, reconnectDelay)
 			time.Sleep(reconnectDelay)
 		}
-	})
+	}()
 
 	wg.Wait()
 	return nil

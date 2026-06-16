@@ -34,7 +34,6 @@ body:
         - "kubectl-plugin"
         - "dashboard"
         - "ci"
-        - "historyserver"
         - "Others"
     validations:
       required: true

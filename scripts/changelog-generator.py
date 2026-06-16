@@ -33,8 +33,6 @@ d760b9c [helm] Add memory limits and resource documentation. (#789) (#798)
 '''
 
 g = ChangelogGenerator("ray-project/kuberay")
-for line in payload.splitlines():
-    if line.strip() == "":
-        continue
-    pr_id = int(line.split("#")[-1].strip()[:-1])
+for pr_match in re.finditer(r"#(\d+)", payload):
+    pr_id = int(pr_match.group(1))
     print("* {}".format(g.generate(pr_id)))

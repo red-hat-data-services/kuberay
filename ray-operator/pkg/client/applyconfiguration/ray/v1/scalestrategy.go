@@ -4,10 +4,7 @@ package v1
 
 // ScaleStrategyApplyConfiguration represents a declarative configuration of the ScaleStrategy type for use
 // with apply.
-//
-// ScaleStrategy to remove workers
 type ScaleStrategyApplyConfiguration struct {
-	// WorkersToDelete workers to be deleted
 	WorkersToDelete []string `json:"workersToDelete,omitempty"`
 }
 

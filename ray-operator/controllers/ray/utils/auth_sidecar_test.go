@@ -154,7 +154,7 @@ func TestInjectAuthSidecar(t *testing.T) {
 		assert.True(t, result.Injected)
 		assert.Equal(t, ModeOIDC, result.AuthType)
 		assert.Equal(t, 2, result.ContainerCount)
-		assert.Empty(t, result.ServiceAccountName)
+		assert.Equal(t, "", result.ServiceAccountName)
 		assert.Len(t, podSpec.Containers, 2)
 	})
 

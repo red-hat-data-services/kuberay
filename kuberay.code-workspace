@@ -13,14 +13,8 @@
 			"path": "kubectl-plugin"
 		},
 		{
-			"path": "historyserver"
-		},
-		{
 			"path": "proto"
-		},
-		{
-			"path": "dashboard"
-		},
+		}
 	],
 	"settings": {}
 }

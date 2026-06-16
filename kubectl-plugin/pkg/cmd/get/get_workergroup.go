@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -47,8 +46,6 @@ type workerGroup struct {
 	cluster         string
 	readyReplicas   int32
 	desiredReplicas int32
-	minReplicas     int32
-	maxReplicas     int32
 }
 
 var getWorkerGroupsExample = templates.Examples(`
@@ -82,13 +79,12 @@ func NewGetWorkerGroupCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 	options := NewGetWorkerGroupOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:               "workergroup [GROUP] [(-c/--ray-cluster) RAYCLUSTER]",
-		Aliases:           []string{"workergroups"},
-		Short:             "Get Ray worker groups",
-		Example:           getWorkerGroupsExample,
-		SilenceUsage:      true,
-		Args:              cobra.MaximumNArgs(1),
-		ValidArgsFunction: completion.WorkerGroupCompletionFunc(cmdFactory),
+		Use:          "workergroup [GROUP] [(-c/--ray-cluster) RAYCLUSTER]",
+		Aliases:      []string{"workergroups"},
+		Short:        "Get Ray worker groups",
+		Example:      getWorkerGroupsExample,
+		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.Complete(args, cmd); err != nil {
 				return err
@@ -102,7 +98,7 @@ func NewGetWorkerGroupCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 	}
 
 	cmd.Flags().StringVarP(&options.cluster, "ray-cluster", "c", "", "Ray cluster")
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list workergroups across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list nodes across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 
 	err := cmd.RegisterFlagCompletionFunc("ray-cluster", completion.RayClusterCompletionFunc(cmdFactory))
 	if err != nil {
@@ -227,19 +223,6 @@ func getWorkerGroupDetails(ctx context.Context, enrichedWorkerGroupSpecs []enric
 
 		workerGroupResources := calculateDesiredResourcesForWorkerGroup(ewgs.spec)
 
-		var (
-			minReplicas int32 // default: 0
-			maxReplicas int32 = math.MaxInt32
-		)
-
-		if ewgs.spec.MinReplicas != nil {
-			minReplicas = *ewgs.spec.MinReplicas
-		}
-
-		if ewgs.spec.MaxReplicas != nil {
-			maxReplicas = *ewgs.spec.MaxReplicas
-		}
-
 		workerGroups = append(workerGroups, workerGroup{
 			namespace:       ewgs.namespace,
 			name:            ewgs.spec.GroupName,
@@ -250,8 +233,6 @@ func getWorkerGroupDetails(ctx context.Context, enrichedWorkerGroupSpecs []enric
 			totalTPU:        workerGroupResources[corev1.ResourceName(util.ResourceGoogleTPU)],
 			totalMemory:     *workerGroupResources.Memory(),
 			cluster:         ewgs.cluster,
-			minReplicas:     minReplicas,
-			maxReplicas:     maxReplicas,
 		})
 	}
 
@@ -286,8 +267,6 @@ func printWorkerGroups(workerGroups []workerGroup, allNamespaces bool, output io
 
 	columns = append(columns, []v1.TableColumnDefinition{
 		{Name: "Name", Type: "string"},
-		{Name: "Min", Type: "string"},
-		{Name: "Max", Type: "string"},
 		{Name: "Replicas", Type: "string"},
 		{Name: "CPUs", Type: "string"},
 		{Name: "GPUs", Type: "string"},
@@ -304,13 +283,8 @@ func printWorkerGroups(workerGroups []workerGroup, allNamespaces bool, output io
 			row.Cells = append(row.Cells, wg.namespace)
 		}
 
-		minStr := fmt.Sprintf("%d", wg.minReplicas)
-		maxStr := fmt.Sprintf("%d", wg.maxReplicas)
-
-		row.Cells = append(row.Cells, []any{
+		row.Cells = append(row.Cells, []interface{}{
 			wg.name,
-			minStr,
-			maxStr,
 			fmt.Sprintf("%d/%d", wg.readyReplicas, wg.desiredReplicas),
 			wg.totalCPU.String(),
 			wg.totalGPU.String(),
@@ -337,7 +311,7 @@ func calculateDesiredResourcesForWorkerGroup(workerGroupSpec rayv1.WorkerGroupSp
 	for range *workerGroupSpec.Replicas {
 		for name, quantity := range podResource {
 			totalResource[name] = quantity.DeepCopy()
-			quantity := totalResource[name]
+			var quantity resource.Quantity = totalResource[name]
 			(&quantity).Mul(int64(*workerGroupSpec.Replicas))
 			// Mul() doesn't recalculate the "s" field. Call String() to do it.
 			_ = quantity.String()

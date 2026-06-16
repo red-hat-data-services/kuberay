@@ -18,20 +18,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 	// Group=ray.io, Version=v1
 	case v1.SchemeGroupVersion.WithKind("AppStatus"):
 		return &rayv1.AppStatusApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("AuthOptions"):
-		return &rayv1.AuthOptionsApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("AutoscalerOptions"):
 		return &rayv1.AutoscalerOptionsApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("ClusterUpgradeOptions"):
-		return &rayv1.ClusterUpgradeOptionsApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("DeletionCondition"):
-		return &rayv1.DeletionConditionApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("DeletionPolicy"):
-		return &rayv1.DeletionPolicyApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("DeletionRule"):
-		return &rayv1.DeletionRuleApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("DeletionStrategy"):
-		return &rayv1.DeletionStrategyApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("GcsFaultToleranceOptions"):
 		return &rayv1.GcsFaultToleranceOptionsApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("HeadGroupSpec"):
@@ -44,14 +32,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rayv1.RayClusterSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("RayClusterStatus"):
 		return &rayv1.RayClusterStatusApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("RayClusterUpgradeStrategy"):
-		return &rayv1.RayClusterUpgradeStrategyApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("RayCronJob"):
-		return &rayv1.RayCronJobApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("RayCronJobSpec"):
-		return &rayv1.RayCronJobSpecApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("RayCronJobStatus"):
-		return &rayv1.RayCronJobStatusApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("RayJob"):
 		return &rayv1.RayJobApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("RayJobSpec"):

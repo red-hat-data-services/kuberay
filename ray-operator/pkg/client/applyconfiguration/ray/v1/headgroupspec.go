@@ -9,27 +9,12 @@ import (
 
 // HeadGroupSpecApplyConfiguration represents a declarative configuration of the HeadGroupSpec type for use
 // with apply.
-//
-// HeadGroupSpec are the spec for the head pod
 type HeadGroupSpecApplyConfiguration struct {
-	// Template is the exact pod template used in K8s deployments, statefulsets, etc.
-	Template *corev1.PodTemplateSpecApplyConfiguration `json:"template,omitempty"`
-	// HeadService is the Kubernetes service of the head pod.
-	HeadService *apicorev1.Service `json:"headService,omitempty"`
-	// EnableIngress indicates whether operator should create ingress object for head service or not.
-	EnableIngress *bool `json:"enableIngress,omitempty"`
-	// Resources specifies the resource quantities for the head group.
-	// These values override the resources passed to `rayStartParams` for the group, but
-	// have no effect on the resources set at the K8s Pod container level.
-	Resources map[string]string `json:"resources,omitempty"`
-	// Labels specifies the Ray node labels for the head group.
-	// These labels will also be added to the Pods of this head group and override the `--labels`
-	// argument passed to `rayStartParams`.
-	Labels map[string]string `json:"labels,omitempty"`
-	// RayStartParams are the params of the start command: node-manager-port, object-store-memory, ...
-	RayStartParams map[string]string `json:"rayStartParams,omitempty"`
-	// ServiceType is Kubernetes service type of the head service. it will be used by the workers to connect to the head pod
-	ServiceType *apicorev1.ServiceType `json:"serviceType,omitempty"`
+	Template       *corev1.PodTemplateSpecApplyConfiguration `json:"template,omitempty"`
+	HeadService    *apicorev1.Service                        `json:"headService,omitempty"`
+	EnableIngress  *bool                                     `json:"enableIngress,omitempty"`
+	RayStartParams map[string]string                         `json:"rayStartParams,omitempty"`
+	ServiceType    *apicorev1.ServiceType                    `json:"serviceType,omitempty"`
 }
 
 // HeadGroupSpecApplyConfiguration constructs a declarative configuration of the HeadGroupSpec type for use with
@@ -59,34 +44,6 @@ func (b *HeadGroupSpecApplyConfiguration) WithHeadService(value apicorev1.Servic
 // If called multiple times, the EnableIngress field is set to the value of the last call.
 func (b *HeadGroupSpecApplyConfiguration) WithEnableIngress(value bool) *HeadGroupSpecApplyConfiguration {
 	b.EnableIngress = &value
-	return b
-}
-
-// WithResources puts the entries into the Resources field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, the entries provided by each call will be put on the Resources field,
-// overwriting an existing map entries in Resources field with the same key.
-func (b *HeadGroupSpecApplyConfiguration) WithResources(entries map[string]string) *HeadGroupSpecApplyConfiguration {
-	if b.Resources == nil && len(entries) > 0 {
-		b.Resources = make(map[string]string, len(entries))
-	}
-	for k, v := range entries {
-		b.Resources[k] = v
-	}
-	return b
-}
-
-// WithLabels puts the entries into the Labels field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, the entries provided by each call will be put on the Labels field,
-// overwriting an existing map entries in Labels field with the same key.
-func (b *HeadGroupSpecApplyConfiguration) WithLabels(entries map[string]string) *HeadGroupSpecApplyConfiguration {
-	if b.Labels == nil && len(entries) > 0 {
-		b.Labels = make(map[string]string, len(entries))
-	}
-	for k, v := range entries {
-		b.Labels[k] = v
-	}
 	return b
 }
 

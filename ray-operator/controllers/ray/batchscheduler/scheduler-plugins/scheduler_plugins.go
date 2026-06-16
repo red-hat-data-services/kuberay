@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -11,23 +12,17 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	schedulerinterface "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/interface"
-	batchschedulerutils "github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler/utils"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 )
 
 const (
-	// This is the batchScheduler name used in the Ray Operator.
-	// We use this name because it is easier to understand and remember.
-	// It is also consistent with the name used in the Helm chart values.yaml.
-	schedulerName string = "scheduler-plugins"
-	// The default scheduler plugins name is "scheduler-plugins-scheduler".
-	// https://github.com/kubernetes-sigs/scheduler-plugins/blob/b3127ba4cc420430ca5322740103220043697eec/manifests/install/charts/as-a-second-scheduler/values.yaml#L6C9-L6C36
-	schedulerInstanceName         string = "scheduler-plugins-scheduler"
+	schedulerName                 string = "scheduler-plugins"
 	kubeSchedulerPodGroupLabelKey string = "scheduling.x-k8s.io/pod-group"
 )
 
@@ -42,11 +37,19 @@ func GetPluginName() string {
 }
 
 func (k *KubeScheduler) Name() string {
-	return schedulerInstanceName
+	return GetPluginName()
 }
 
-func createPodGroup(app *rayv1.RayCluster) *v1alpha1.PodGroup {
-	// TODO(troychiu): Consider the case when autoscaling is enabled.
+func createPodGroup(_ context.Context, app *rayv1.RayCluster) *v1alpha1.PodGroup {
+	// we set replica as 1 for the head pod
+	replica := int32(1)
+	for _, workerGroup := range app.Spec.WorkerGroupSpecs {
+		if workerGroup.Replicas == nil {
+			continue
+		}
+		// TODO(kevin85421): We should consider the case of `numOfHosts` is not 1.
+		replica += *workerGroup.Replicas
+	}
 
 	podGroup := &v1alpha1.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
@@ -62,18 +65,14 @@ func createPodGroup(app *rayv1.RayCluster) *v1alpha1.PodGroup {
 			},
 		},
 		Spec: v1alpha1.PodGroupSpec{
-			MinMember:    utils.CalculateDesiredReplicas(app) + 1, // +1 for the head pod
+			MinMember:    replica,
 			MinResources: utils.CalculateDesiredResources(app),
 		},
 	}
 	return podGroup
 }
 
-func (k *KubeScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, object metav1.Object) error {
-	app, ok := object.(*rayv1.RayCluster)
-	if !ok {
-		return fmt.Errorf("currently only RayCluster is supported, got %T", object)
-	}
+func (k *KubeScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, app *rayv1.RayCluster) error {
 	if !k.isGangSchedulingEnabled(app) {
 		return nil
 	}
@@ -82,7 +81,7 @@ func (k *KubeScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, objec
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		podGroup = createPodGroup(app)
+		podGroup = createPodGroup(ctx, app)
 		if err := k.cli.Create(ctx, podGroup); err != nil {
 			if errors.IsAlreadyExists(err) {
 				return nil
@@ -93,33 +92,48 @@ func (k *KubeScheduler) DoBatchSchedulingOnSubmission(ctx context.Context, objec
 	return nil
 }
 
-// AddMetadataToChildResource adds essential labels and annotations to the child resource.
+// AddMetadataToPod adds essential labels and annotations to the Ray pods
 // the scheduler needs these labels and annotations in order to do the scheduling properly
-func (k *KubeScheduler) AddMetadataToChildResource(_ context.Context, parent metav1.Object, child metav1.Object, _ string) {
-	// when gang scheduling is enabled, extra labels need to be added to all child resources
-	if k.isGangSchedulingEnabled(parent) {
-		labels := child.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		labels[kubeSchedulerPodGroupLabelKey] = parent.GetName()
-		child.SetLabels(labels)
+func (k *KubeScheduler) AddMetadataToPod(_ context.Context, app *rayv1.RayCluster, _ string, pod *corev1.Pod) {
+	// when gang scheduling is enabled, extra labels need to be added to all pods
+	if k.isGangSchedulingEnabled(app) {
+		pod.Labels[kubeSchedulerPodGroupLabelKey] = app.Name
 	}
-	batchschedulerutils.AddSchedulerNameToObject(child, k.Name())
+	// TODO(kevin85421): Currently, we only support "single scheduler" mode. If we want to support
+	// "second scheduler" mode, we need to add `schedulerName` to the pod spec.
 }
 
-func (k *KubeScheduler) isGangSchedulingEnabled(obj metav1.Object) bool {
-	_, exist := obj.GetLabels()[utils.RayGangSchedulingEnabled]
+func (k *KubeScheduler) isGangSchedulingEnabled(app *rayv1.RayCluster) bool {
+	_, exist := app.Labels[utils.RayClusterGangSchedulingEnabled]
 	return exist
 }
 
-func (k *KubeScheduler) CleanupOnCompletion(_ context.Context, _ metav1.Object) (bool, error) {
-	// KubeScheduler doesn't need cleanup
-	return false, nil
-}
-
-func (kf *KubeSchedulerFactory) New(_ context.Context, _ *rest.Config, cli client.Client) (schedulerinterface.BatchScheduler, error) {
-	if err := v1alpha1.AddToScheme(cli.Scheme()); err != nil {
+func (kf *KubeSchedulerFactory) New(ctx context.Context, c *rest.Config) (schedulerinterface.BatchScheduler, error) {
+	// TODO(kevin85421): We should not initialize the informer cache here. We should reuse
+	// the reconciler's cache instead.
+	scheme := runtime.NewScheme()
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+	ccache, err := cache.New(c, cache.Options{
+		Scheme: scheme,
+	})
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		if err := ccache.Start(ctx); err != nil {
+			panic(err)
+		}
+	}()
+	if synced := ccache.WaitForCacheSync(ctx); !synced {
+		return nil, fmt.Errorf("failed to sync cache")
+	}
+	cli, err := client.New(c, client.Options{
+		Scheme: scheme,
+		Cache: &client.CacheOptions{
+			Reader: ccache,
+		},
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &KubeScheduler{
