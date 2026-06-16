@@ -3,11 +3,12 @@ package schedulerinterface
 import (
 	"context"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 )
 
 // BatchScheduler manages submitting RayCluster pods to a third-party scheduler.
@@ -16,26 +17,20 @@ type BatchScheduler interface {
 	// https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/
 	Name() string
 
-	// DoBatchSchedulingOnSubmission handles submitting the RayCluster/RayJob to the batch scheduler on creation / update
+	// DoBatchSchedulingOnSubmission handles submitting the RayCluster to the batch scheduler on creation / update
 	// For most batch schedulers, this results in the creation of a PodGroup.
-	DoBatchSchedulingOnSubmission(ctx context.Context, object metav1.Object) error
+	DoBatchSchedulingOnSubmission(ctx context.Context, app *rayv1.RayCluster) error
 
-	// AddMetadataToChildResource enriches the child resource (batchv1.Job, rayv1.RayCluster) with metadata necessary to tie it to the scheduler.
+	// AddMetadataToPod enriches Pod specs with metadata necessary to tie them to the scheduler.
 	// For example, setting labels for queues / priority, and setting schedulerName.
-	AddMetadataToChildResource(ctx context.Context, parent metav1.Object, child metav1.Object, groupName string)
-
-	// CleanupOnCompletion handles cleanup when the RayJob reaches terminal state (Complete/Failed).
-	// For batch schedulers like Volcano, this deletes the PodGroup to release queue resources.
-	// This is a no-op for schedulers that don't need cleanup.
-	// Returns (didCleanup, error) where didCleanup indicates whether actual cleanup was performed.
-	CleanupOnCompletion(ctx context.Context, object metav1.Object) (didCleanup bool, err error)
+	AddMetadataToPod(ctx context.Context, app *rayv1.RayCluster, groupName string, pod *corev1.Pod)
 }
 
 // BatchSchedulerFactory handles initial setup of the scheduler plugin by registering the
 // necessary callbacks with the operator, and the creation of the BatchScheduler itself.
 type BatchSchedulerFactory interface {
 	// New creates a new BatchScheduler for the scheduler plugin.
-	New(ctx context.Context, config *rest.Config, cli client.Client) (BatchScheduler, error)
+	New(ctx context.Context, config *rest.Config) (BatchScheduler, error)
 
 	// AddToScheme adds the types in this scheduler to the given scheme (runs during init).
 	AddToScheme(scheme *runtime.Scheme)
@@ -57,18 +52,14 @@ func (d *DefaultBatchScheduler) Name() string {
 	return GetDefaultPluginName()
 }
 
-func (d *DefaultBatchScheduler) DoBatchSchedulingOnSubmission(_ context.Context, _ metav1.Object) error {
+func (d *DefaultBatchScheduler) DoBatchSchedulingOnSubmission(_ context.Context, _ *rayv1.RayCluster) error {
 	return nil
 }
 
-func (d *DefaultBatchScheduler) AddMetadataToChildResource(_ context.Context, _ metav1.Object, _ metav1.Object, _ string) {
+func (d *DefaultBatchScheduler) AddMetadataToPod(_ context.Context, _ *rayv1.RayCluster, _ string, _ *corev1.Pod) {
 }
 
-func (d *DefaultBatchScheduler) CleanupOnCompletion(_ context.Context, _ metav1.Object) (bool, error) {
-	return false, nil
-}
-
-func (df *DefaultBatchSchedulerFactory) New(_ context.Context, _ *rest.Config, _ client.Client) (BatchScheduler, error) {
+func (df *DefaultBatchSchedulerFactory) New(_ context.Context, _ *rest.Config) (BatchScheduler, error) {
 	return &DefaultBatchScheduler{}, nil
 }
 

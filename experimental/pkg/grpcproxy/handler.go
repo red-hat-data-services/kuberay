@@ -2,7 +2,6 @@ package grpcproxy
 
 import (
 	"context"
-	"errors"
 	"io"
 	"strings"
 
@@ -21,11 +20,11 @@ var clientStreamDescForProxying = &grpc.StreamDesc{
 
 // RegisterService sets up a proxy handler for a particular gRPC service and method.
 // The behavior is the same as if you were registering a handler method, e.g. from a generated pb.go file.
-func RegisterService(server *grpc.Server, director StreamDirector, serviceName string, methodNames ...string) *Handler {
-	streamer := &Handler{director: director, securityheader: nil}
+func RegisterService(server *grpc.Server, director StreamDirector, serviceName string, methodNames ...string) *handler {
+	streamer := &handler{director: director, securityheader: nil}
 	fakeDesc := &grpc.ServiceDesc{
 		ServiceName: serviceName,
-		HandlerType: (*any)(nil),
+		HandlerType: (*interface{})(nil),
 	}
 	for _, m := range methodNames {
 		streamDesc := grpc.StreamDesc{
@@ -40,28 +39,28 @@ func RegisterService(server *grpc.Server, director StreamDirector, serviceName s
 	return streamer
 }
 
-// TransparentHandler returns a Handler that attempts to proxy all requests that are not registered in the server.
+// TransparentHandler returns a handler that attempts to proxy all requests that are not registered in the server.
 // The indented use here is as a transparent proxy, where the server doesn't know about the services implemented by the
 // backends. It should be used as a `grpc.UnknownServiceHandler`.
-func TransparentHandler(director StreamDirector) (grpc.StreamHandler, *Handler) {
-	streamer := &Handler{director: director, securityheader: nil}
+func TransparentHandler(director StreamDirector) (grpc.StreamHandler, *handler) {
+	streamer := &handler{director: director, securityheader: nil}
 	return streamer.handler, streamer
 }
 
-type Handler struct {
+type handler struct {
 	director       StreamDirector
 	securityheader map[string]string
 }
 
 // Adding security header handler
-func (s *Handler) AddSecurityHeaderToHandler(securityheader map[string]string) {
+func (s *handler) AddSecurityHeaderToHandler(securityheader map[string]string) {
 	s.securityheader = securityheader
 }
 
 // handler is where the real magic of proxying happens.
 // It is invoked like any gRPC server stream and uses the emptypb.Empty type server
 // to proxy calls between the input and output streams.
-func (s *Handler) handler(_ any, serverStream grpc.ServerStream) error {
+func (s *handler) handler(srv interface{}, serverStream grpc.ServerStream) error {
 	// little bit of gRPC internals never hurt anyone
 	fullMethodName, ok := grpc.MethodFromServerStream(serverStream)
 	if !ok {
@@ -72,11 +71,11 @@ func (s *Handler) handler(_ any, serverStream grpc.ServerStream) error {
 		if !ok {
 			return status.Errorf(codes.Internal, "lowLevelServerStream not exists in context")
 		}
-		for headerName, headerValue := range s.securityheader {
-			hName := strings.ToLower(headerName)
-			if v, exists := header[hName]; exists {
+		for header_name, header_value := range s.securityheader {
+			h_name := strings.ToLower(header_name)
+			if v, exists := header[h_name]; exists {
 				// Authentication header exists
-				if v[0] != strings.ToLower(headerValue) {
+				if v[0] != strings.ToLower(header_value) {
 					return status.Error(codes.Unauthenticated, "Request unauthorized")
 				}
 			} else {
@@ -105,10 +104,10 @@ func (s *Handler) handler(_ any, serverStream grpc.ServerStream) error {
 	s2cErrChan := s.forwardServerToClient(serverStream, clientStream)
 	c2sErrChan := s.forwardClientToServer(clientStream, serverStream)
 	// We don't know which side is going to stop sending first, so we need a select between the two.
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		select {
 		case s2cErr := <-s2cErrChan:
-			if errors.Is(s2cErr, io.EOF) {
+			if s2cErr == io.EOF {
 				// this is the happy case where the sender has encountered io.EOF, and won't be sending anymore./
 				// the clientStream>serverStream may continue pumping though.
 				err := clientStream.CloseSend()
@@ -128,7 +127,7 @@ func (s *Handler) handler(_ any, serverStream grpc.ServerStream) error {
 			// will be nil.
 			serverStream.SetTrailer(clientStream.Trailer())
 			// c2sErr will contain RPC error from client code. If not io.EOF return the RPC error as server stream error.
-			if !errors.Is(c2sErr, io.EOF) {
+			if c2sErr != io.EOF {
 				return c2sErr
 			}
 			return nil
@@ -137,7 +136,7 @@ func (s *Handler) handler(_ any, serverStream grpc.ServerStream) error {
 	return status.Errorf(codes.Internal, "gRPC proxying should never reach this stage.")
 }
 
-func (s *Handler) forwardClientToServer(src grpc.ClientStream, dst grpc.ServerStream) chan error {
+func (s *handler) forwardClientToServer(src grpc.ClientStream, dst grpc.ServerStream) chan error {
 	ret := make(chan error, 1)
 	go func() {
 		f := &emptypb.Empty{}
@@ -169,7 +168,7 @@ func (s *Handler) forwardClientToServer(src grpc.ClientStream, dst grpc.ServerSt
 	return ret
 }
 
-func (s *Handler) forwardServerToClient(src grpc.ServerStream, dst grpc.ClientStream) chan error {
+func (s *handler) forwardServerToClient(src grpc.ServerStream, dst grpc.ClientStream) chan error {
 	ret := make(chan error, 1)
 	go func() {
 		f := &emptypb.Empty{}

@@ -22,8 +22,6 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
       serviceAccountName: kuberay-operator
       containers:
       - command:
@@ -40,12 +38,6 @@ spec:
         name: kuberay-operator
         securityContext:
           allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          readOnlyRootFilesystem: true
-          seccompProfile:
-            type: RuntimeDefault
         livenessProbe:
           httpGet:
             path: /metrics

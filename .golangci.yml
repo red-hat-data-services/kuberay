@@ -1,129 +1,99 @@
-version: "2"
+linters-settings:
+  gofmt:
+    simplify: true
+  gosec:
+    excludes:
+      - G601
+  ginkgolinter:
+    forbid-focus-container: true
+  goimports:
+    local-prefixes: github.com/ray-project/kuberay
+  misspell:
+    locale: US
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+  revive:
+    ignore-generated-header: true
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: empty-block
+      - name: error-naming
+      - name: error-return
+      - name: error-strings
+      - name: errorf
+      - name: exported
+        disabled: true
+      - name: if-return
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: redefines-builtin-id
+      - name: superfluous-else
+      - name: time-naming
+      - name: unexported-return
+      - name: unreachable-code
+      - name: unused-parameter
+      - name: var-declaration
+      - name: var-naming
+        exclude:
+          - "**/ray-operator/apis/config/v1alpha1/*.go"
+          - "**/ray-operator/apis/ray/v1alpha1/*.go"
+          - "**/ray-operator/apis/ray/v1/*.go"
+        arguments:
+          - ["ID", "JSON", "HTTP", "IP"] # AllowList
+          - [] # DenyList
+          - - upperCaseConst: true
+  gocyclo:
+    min-complexity: 15
+  govet:
+    enable:
+      - fieldalignment
+  lll:
+    line-length: 120
+  gci: # Splits all import blocks into different sections and sorts them.
+    sections:
+      - standard # Go official imports, like "fmt"
+      - default # Third-party libraries (anything not in standard or prefix)
+      - prefix(github.com/ray-project/kuberay) # kuberay packages
+    skip-generated: true
 linters:
-  default: none
   enable:
     - asciicheck
     - errcheck
+    - errorlint
+    - gci
     - ginkgolinter
+#    - gocyclo
+    - gofmt
+    - gofumpt
+    - goimports
     - gosec
+    - gosimple
     - govet
     - ineffassign
+#    - lll
     - makezero
     - misspell
-    - modernize
     - nilerr
+    - noctx
     - nolintlint
     - predeclared
-    - testifylint
+    - revive
+    - staticcheck
+    - typecheck
     - unconvert
     - unparam
     - unused
     - wastedassign
-    - errorlint
-    - staticcheck
-    - noctx
-    - revive
-  settings:
-    staticcheck:
-      checks: ["all", "-SA1019", "-ST1001", "-ST1003", "-ST1005", "-QF1008"]
-    ginkgolinter:
-      forbid-focus-container: true
-    gocyclo:
-      min-complexity: 15
-    gosec:
-      excludes:
-        - G601
-    lll:
-      line-length: 120
-    misspell:
-      locale: US
-    nolintlint:
-      require-explanation: true
-      require-specific: true
-    revive:
-      rules:
-        - name: blank-imports
-        - name: context-as-argument
-        - name: context-keys-type
-        - name: empty-block
-        - name: error-naming
-        - name: error-return
-        - name: error-strings
-        - name: errorf
-        - name: exported
-          disabled: true
-        - name: if-return
-        - name: increment-decrement
-        - name: indent-error-flow
-        - name: package-comments
-        - name: range
-        - name: receiver-naming
-        - name: redefines-builtin-id
-        - name: superfluous-else
-        - name: time-naming
-        - name: unexported-return
-        - name: unreachable-code
-        - name: unused-parameter
-        - name: var-declaration
-        - name: var-naming
-          arguments:
-            - ["ID", "JSON", "HTTP", "IP"] # AllowList
-            - [] # DenyList
-            - - upperCaseConst: true
-          exclude:
-            - '**/ray-operator/apis/config/v1alpha1/*.go'
-            - '**/ray-operator/apis/ray/v1alpha1/*.go'
-            - '**/ray-operator/apis/ray/v1/*.go'
-            - '**/ray-operator/controllers/ray/batchscheduler/utils/*.go'
-            - '**/ray-operator/controllers/ray/common/*.go'
-            - '**/ray-operator/controllers/ray/utils/*.go'
-            - '**/ray-operator/pkg/utils/*.go'
-            - '**/ray-operator/controllers/ray/utils/types/*.go'
-            - '**/apiserver/pkg/http/*.go'
-            - '**/apiserver/pkg/util/*.go'
-            - '**/apiserversdk/util/*.go'
-            - '**/kubectl-plugin/pkg/util/*.go'
-    modernize:
-      disable:
-        - omitzero
-  exclusions:
-    generated: strict
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
-      - _generated.go
+    - testifylint
+  disable-all: true
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-formatters:
-  enable:
-    - gci
-    - gofmt
-    - gofumpt
-    - goimports
-  settings:
-    gci: # Splits all import blocks into different sections and sorts them.
-      sections:
-        - standard # Go official imports, like "fmt"
-        - default # Third-party libraries (anything not in standard or prefix)
-        - prefix(github.com/ray-project/kuberay) # kuberay packages
-    gofmt:
-      simplify: true
-    goimports:
-      local-prefixes:
-        - github.com/ray-project/kuberay
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
 run:
-  # timeout for analysis, e.g. 30s, 5m, default timeout is disabled
-  timeout: 10m
+  timeout: 3m

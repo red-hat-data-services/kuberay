@@ -3,7 +3,6 @@ package ray
 import (
 	"context"
 	"os"
-	"slices"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -473,7 +472,12 @@ func TestBuildHeadNetworkPolicy_SecuredPorts(t *testing.T) {
 
 // Helper function to check if slice contains string
 func contains(slice []string, item string) bool {
-	return slices.Contains(slice, item)
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGetKubeRayNamespaces_NonOpenShift_WithPodNamespace(t *testing.T) {

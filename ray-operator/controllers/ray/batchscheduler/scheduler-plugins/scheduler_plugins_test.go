@@ -82,7 +82,7 @@ func TestCreatePodGroup(t *testing.T) {
 
 	cluster := createTestRayCluster(1)
 
-	podGroup := createPodGroup(&cluster)
+	podGroup := createPodGroup(context.TODO(), &cluster)
 
 	// 256m * 3 (requests, not limits)
 	a.Equal("768m", podGroup.Spec.MinResources.Cpu().String())
@@ -95,75 +95,4 @@ func TestCreatePodGroup(t *testing.T) {
 
 	// 1 head and 2 workers
 	a.Equal(int32(3), podGroup.Spec.MinMember)
-}
-
-func TestCreatePodGroupWithMultipleHosts(t *testing.T) {
-	a := assert.New(t)
-
-	cluster := createTestRayCluster(2) // 2 hosts
-
-	podGroup := createPodGroup(&cluster)
-
-	// 256m * 5 (requests, not limits)
-	a.Equal("1280m", podGroup.Spec.MinResources.Cpu().String())
-
-	// 256Mi * 5 (requests, not limits)
-	a.Equal("1280Mi", podGroup.Spec.MinResources.Memory().String())
-
-	// 4 GPUs total
-	a.Equal("4", podGroup.Spec.MinResources.Name("nvidia.com/gpu", resource.BinarySI).String())
-
-	// 1 head and 4 workers
-	a.Equal(int32(5), podGroup.Spec.MinMember)
-}
-
-func TestAddMetadataToChildResource(t *testing.T) {
-	tests := []struct {
-		name         string
-		enableGang   bool
-		podHasLabels bool
-	}{
-		{"GangEnabled_WithLabels", true, true},
-		{"GangDisabled_WithLabels", false, true},
-		{"GangDisabled_WithoutLabels", false, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := assert.New(t)
-			cluster := createTestRayCluster(1)
-			cluster.Labels = make(map[string]string)
-
-			if tt.enableGang {
-				cluster.Labels["ray.io/gang-scheduling-enabled"] = "true"
-			}
-
-			var pod *corev1.Pod
-			if tt.podHasLabels {
-				pod = &corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels: map[string]string{},
-					},
-				}
-			} else {
-				pod = &corev1.Pod{}
-			}
-
-			scheduler := &KubeScheduler{}
-			scheduler.AddMetadataToChildResource(context.TODO(), &cluster, pod, "worker")
-
-			if tt.enableGang {
-				a.Equal(cluster.Name, pod.Labels[kubeSchedulerPodGroupLabelKey])
-			} else {
-				_, exists := pod.Labels[kubeSchedulerPodGroupLabelKey]
-				a.False(exists)
-			}
-
-			a.Equal(scheduler.Name(), pod.Spec.SchedulerName)
-			// The default scheduler plugins name is "scheduler-plugins-scheduler"
-			// The batchScheduler name is "scheduler-plugins"
-			// This is to ensure batchScheduler and default scheduler plugins name are not the same.
-			a.NotEqual(scheduler.Name(), GetPluginName())
-		})
-	}
 }

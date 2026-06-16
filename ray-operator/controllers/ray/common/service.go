@@ -3,7 +3,6 @@ package common
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
@@ -55,7 +53,9 @@ func BuildServiceForHeadPod(ctx context.Context, cluster rayv1.RayCluster, label
 
 	// Deep copy the selector to avoid modifying the original object
 	labelsForService := make(map[string]string)
-	maps.Copy(labelsForService, selector)
+	for k, v := range selector {
+		labelsForService[k] = v
+	}
 
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -141,7 +141,7 @@ func BuildServiceForHeadPod(ctx context.Context, cluster rayv1.RayCluster, label
 	return headService, nil
 }
 
-// BuildHeadServiceForRayService builds the service for a pod. Currently, there is only one service that allows
+// BuildHeadServiceForRayService Builds the service for a pod. Currently, there is only one service that allows
 // the worker nodes to connect to the head node.
 // RayService controller updates the service whenever a new RayCluster serves the traffic.
 func BuildHeadServiceForRayService(ctx context.Context, rayService rayv1.RayService, rayCluster rayv1.RayCluster) (*corev1.Service, error) {
@@ -150,7 +150,7 @@ func BuildHeadServiceForRayService(ctx context.Context, rayService rayv1.RayServ
 		return nil, err
 	}
 
-	headSvcName, err := utils.GenerateHeadServiceName(utils.RayServiceCRD, rayv1.RayClusterSpec{}, rayService.Name)
+	headSvcName, err := utils.GenerateHeadServiceName(utils.RayServiceCRD, rayService.Spec.RayClusterSpec, rayService.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -179,14 +179,12 @@ func BuildServeServiceForRayCluster(ctx context.Context, rayCluster rayv1.RayClu
 
 // BuildServeService builds the service for head node and worker nodes who have healthy http proxy to serve traffics.
 func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayCluster rayv1.RayCluster, isRayService bool) (*corev1.Service, error) {
+	log := ctrl.LoggerFrom(ctx)
 	name := rayCluster.Name
 	namespace := rayCluster.Namespace
 	crdType := utils.RayClusterCRD
 	if isRayService {
-		// For IncrementalUpgrade, the name is based on the unique RayCluster.
-		if !utils.IsIncrementalUpgradeEnabled(&rayService.Spec) {
-			name = rayService.Name
-		}
+		name = rayService.Name
 		namespace = rayService.Namespace
 		crdType = utils.RayServiceCRD
 	}
@@ -211,26 +209,23 @@ func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayClus
 		defaultType = rayService.Spec.RayClusterSpec.HeadGroupSpec.ServiceType
 	}
 
-	// `portsInt` is a map of port names to port numbers, while `ports` is a list of ServicePort objects.
-	// Include ports named "serve" or with the prefix "serve-" (e.g., "serve-grpc") to support
-	// multiple serving protocols such as HTTP and gRPC.
+	// `portsInt` is a map of port names to port numbers, while `ports` is a list of ServicePort objects
 	portsInt := getServicePorts(rayCluster)
-	ports := make([]corev1.ServicePort, 0)
-	for name, port := range portsInt {
-		if isServingPort(name) {
-			svcPort := corev1.ServicePort{Name: name, Port: port}
-			ports = append(ports, svcPort)
-		}
+	ports := make([]corev1.ServicePort, 0, 1)
+	if _, defined := portsInt[utils.ServingPortName]; defined {
+		// Only include serve port
+		svcPort := corev1.ServicePort{Name: utils.ServingPortName, Port: portsInt[utils.ServingPortName]}
+		ports = append(ports, svcPort)
 	}
 
 	if isRayService {
 		// We are invoked from RayService
 		if len(ports) == 0 && rayService.Spec.ServeService == nil {
-			return nil, fmt.Errorf("Please specify a port named 'serve' (or with the prefix 'serve-', e.g. 'serve-grpc') " +
-				"in the Ray head container; otherwise, the Kubernetes service for Ray Serve will not be created.")
+			return nil, fmt.Errorf("Please specify the port named 'serve' in the Ray head container; " +
+				"otherwise, the Kubernetes service for Ray Serve will not be created.")
 		}
 
-		if rayService.Spec.ServeService != nil && !utils.IsIncrementalUpgradeEnabled(&rayService.Spec) {
+		if rayService.Spec.ServeService != nil {
 			// Use the provided "custom" ServeService.
 			// Deep copy the ServeService to avoid modifying the original object
 			serveService := rayService.Spec.ServeService.DeepCopy()
@@ -242,26 +237,21 @@ func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayClus
 				serveService.ObjectMeta.Annotations = make(map[string]string)
 			}
 
-			// Merge auto-detected serve ports with user-provided ServeService ports.
-			// If the user specified a port with the same name, use the user's definition
-			// to preserve fields like AppProtocol (e.g., "kubernetes.io/h2c" for gRPC).
-			// If no ports were auto-detected, fall back to filtering the user-provided
-			// ServeService ports for any that match the serving port naming convention.
-			userPortsByName := make(map[string]corev1.ServicePort)
-			for _, p := range serveService.Spec.Ports {
-				userPortsByName[p.Name] = p
-			}
-
+			// Add port with name "serve" if it is already not added and ignore any custom ports
+			// Keeping this consistentent with adding only serve port in serve service
 			if len(ports) != 0 {
-				mergedPorts := make([]corev1.ServicePort, 0, len(ports))
-				for _, autoPort := range ports {
-					if userPort, exists := userPortsByName[autoPort.Name]; exists {
-						mergedPorts = append(mergedPorts, userPort)
-					} else {
-						mergedPorts = append(mergedPorts, autoPort)
+				log.Info("port with name 'serve' already added. Ignoring user provided ports for serve service")
+				serveService.Spec.Ports = ports
+			} else {
+				ports := make([]corev1.ServicePort, 0, 1)
+				for _, port := range serveService.Spec.Ports {
+					if port.Name == utils.ServingPortName {
+						svcPort := corev1.ServicePort{Name: port.Name, Port: port.Port}
+						ports = append(ports, svcPort)
+						break
 					}
 				}
-				serveService.Spec.Ports = mergedPorts
+				serveService.Spec.Ports = ports
 			}
 
 			setLabelsforUserProvidedService(serveService, labels)
@@ -275,8 +265,8 @@ func BuildServeService(ctx context.Context, rayService rayv1.RayService, rayClus
 
 	// We are invoked from cluster
 	if len(ports) == 0 {
-		return nil, fmt.Errorf("Please specify a port named 'serve' (or with the prefix 'serve-', e.g. 'serve-grpc') " +
-			"in the Ray head container; otherwise, the Kubernetes service for Ray Serve will not be created.")
+		return nil, fmt.Errorf("Please specify the port named 'serve' in the Ray head container; " +
+			"otherwise, the Kubernetes service for Ray Serve will not be created.")
 	}
 
 	serveService := &corev1.Service{
@@ -325,26 +315,6 @@ func BuildHeadlessServiceForRayCluster(rayCluster rayv1.RayCluster) *corev1.Serv
 	}
 
 	return headlessService
-}
-
-// GetServePort finds the container port named "serve" in the RayCluster's head group spec.
-// It returns the default Ray Serve port 8000 if not explicitly defined.
-func GetServePort(cluster *rayv1.RayCluster) gwv1.PortNumber {
-	if cluster == nil || len(cluster.Spec.HeadGroupSpec.Template.Spec.Containers) == 0 {
-		return gwv1.PortNumber(utils.DefaultServingPort)
-	}
-
-	// Get the head container
-	headContainer := &cluster.Spec.HeadGroupSpec.Template.Spec.Containers[utils.RayContainerIndex]
-
-	// Find the port named "serve" in the head group's container spec.
-	port := utils.FindContainerPort(
-		headContainer,
-		utils.ServingPortName,
-		utils.DefaultServingPort,
-	)
-
-	return port
 }
 
 func setServiceTypeForUserProvidedService(ctx context.Context, service *corev1.Service, defaultType corev1.ServiceType) {
@@ -396,7 +366,9 @@ func setLabelsforUserProvidedService(service *corev1.Service, labels map[string]
 	if service.ObjectMeta.Labels == nil {
 		service.ObjectMeta.Labels = make(map[string]string)
 	}
-	maps.Copy(service.ObjectMeta.Labels, labels)
+	for k, v := range labels {
+		service.ObjectMeta.Labels[k] = v
+	}
 }
 
 // getServicePorts will either user passing ports or default ports to create service.
@@ -441,10 +413,4 @@ func getDefaultPorts() map[string]int32 {
 		utils.MetricsPortName:   utils.DefaultMetricsPort,
 		utils.ServingPortName:   utils.DefaultServingPort,
 	}
-}
-
-// isServingPort returns true if the port name matches the serving port naming convention:
-// either exactly "serve" or prefixed with "serve-" (e.g., "serve-grpc").
-func isServingPort(name string) bool {
-	return name == utils.ServingPortName || strings.HasPrefix(name, utils.ServingPortName+"-")
 }

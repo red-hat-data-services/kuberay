@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { useRouter } from "next/navigation";
 import {
   FormLabel,
   Stack,
@@ -14,104 +13,86 @@ import {
   Stepper,
   Step,
   StepIndicator,
+  ToggleButtonGroup,
   AccordionGroup,
   Accordion,
   AccordionSummary,
   AccordionDetails,
   accordionClasses,
+  Select,
+  Option,
   FormHelperText,
   Alert,
 } from "@mui/joy";
+import DeveloperBoardIcon from "@mui/icons-material/DeveloperBoard";
+import StorageIcon from "@mui/icons-material/Storage";
+import MemoryIcon from "@mui/icons-material/Memory";
+import CreateIcon from "@mui/icons-material/Create";
 import { InfoOutlined } from "@mui/icons-material";
+import { mutate } from "swr";
+import { useSnackBar } from "./SnackBarProvider";
 import { useCreateJob } from "@/hooks/api/useCreateJob";
-import { CreateRayJobConfig } from "@/types/v2/api/rayjob";
+
+interface ComputeTemplateButton {
+  value: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}
+
+const computeTemplateButtons: ComputeTemplateButton[] = [
+  {
+    value: "cpu",
+    icon: <MemoryIcon />,
+    title: "CPU",
+    description: "For CPU-intensive workloads with 256 CPU cores. ",
+  },
+  {
+    value: "memory",
+    icon: <StorageIcon />,
+    title: "Memory",
+    description: "For memory-intensive workloads with 500 GiB memory. ",
+  },
+  {
+    value: "gpu",
+    icon: <DeveloperBoardIcon />,
+    title: "GPU",
+    description: "For GPU-accelerated workloads with 4 GPUs.",
+  },
+  {
+    value: "custom",
+    icon: <CreateIcon />,
+    title: "Custom",
+    description: "Create your own cluster compute template.",
+  },
+];
 
 export const CreateJobForm = () => {
-  const router = useRouter();
   const [jobName, setJobName] = React.useState(
-    "test-job" + Math.floor(Math.random() * 100),
+    "test-job" + Math.floor(Math.random() * 100)
   );
   const [dockerImage, setDockerImage] = React.useState("rayproject/ray:2.46.0");
   const [entrypoint, setEntrypoint] = React.useState(
-    'python -c "import time; time.sleep(10)"',
+    'python -c \\"import time; time.sleep(10)\\"'
   );
-
-  // Head node resources
-  const [headCpu, setHeadCpu] = React.useState("2");
-  const [headMemory, setHeadMemory] = React.useState("4Gi");
-  const [headGpu, setHeadGpu] = React.useState("0");
-
-  // Worker node resources
-  const [workerReplicas, setWorkerReplicas] = React.useState("1");
-  const [workerMinReplicas, setWorkerMinReplicas] = React.useState("0");
-  const [workerMaxReplicas, setWorkerMaxReplicas] = React.useState("2");
-  const [workerCpu, setWorkerCpu] = React.useState("2");
-  const [workerMemory, setWorkerMemory] = React.useState("4Gi");
-  const [workerGpu, setWorkerGpu] = React.useState("0");
+  const [computeTemplate, setComputeTemplate] = React.useState<string | null>(
+    null
+  );
+  const [customComputeTemplate, setCustomComputeTemplate] =
+    React.useState("new-template");
+  const [newCustomComputeTemplate, setNewCustomComputeTemplate] =
+    React.useState("");
 
   const { creating, createJob } = useCreateJob();
 
-  // Check if all resource fields are filled
-  const areResourcesFilled = React.useMemo(() => {
-    return !!(
-      headCpu &&
-      headMemory &&
-      headGpu &&
-      workerReplicas &&
-      workerMinReplicas &&
-      workerMaxReplicas &&
-      workerCpu &&
-      workerMemory &&
-      workerGpu
-    );
-  }, [
-    headCpu,
-    headMemory,
-    headGpu,
-    workerReplicas,
-    workerMinReplicas,
-    workerMaxReplicas,
-    workerCpu,
-    workerMemory,
-    workerGpu,
-  ]);
-
-  const navigateToJobsPage = () => {
-    router.push("/jobs");
-  };
-
   const handleCreateJob = async () => {
-    const jobConfig: CreateRayJobConfig = {
-      jobName,
-      dockerImage,
-      entrypoint,
-      headResources: {
-        cpu: headCpu,
-        memory: headMemory,
-        gpu: headGpu,
-      },
-      workerResources: {
-        replicas: parseInt(workerReplicas) || 1,
-        minReplicas: parseInt(workerMinReplicas) || 0,
-        maxReplicas: parseInt(workerMaxReplicas) || 2,
-        cpu: workerCpu,
-        memory: workerMemory,
-        gpu: workerGpu,
-      },
-    };
-
-    const success = await createJob(jobConfig);
-    if (success) {
-      navigateToJobsPage();
-    }
+    await createJob(jobName, dockerImage, entrypoint);
   };
-
-  const handleCancel = () => {
-    navigateToJobsPage();
-  };
-
   return (
     <>
+      <Alert color="danger" sx={{ mb: 3 }}>
+        This is current under development and not ready for use.
+      </Alert>
       <Stepper
         orientation="vertical"
         sx={{
@@ -186,23 +167,70 @@ export const CreateJobForm = () => {
         <Step
           indicator={
             <StepIndicator
-              variant={areResourcesFilled ? "solid" : "outlined"}
+              variant={computeTemplate ? "solid" : "outlined"}
               color="primary"
             >
               3
             </StepIndicator>
           }
         >
-          <Typography level="title-lg">Hardware Resources</Typography>
+          <Typography level="title-lg">Compute Template</Typography>
           <Typography level="body-sm" sx={{ mt: -1, mb: 1 }}>
-            Configure compute resources for your Ray cluster
+            Hardware resources for your Ray cluster
           </Typography>
-          {!areResourcesFilled && (
-            <Alert color="warning" size="sm" sx={{ mb: 1 }}>
-              <InfoOutlined />
-              Please fill in all resource fields
-            </Alert>
+          <ToggleButtonGroup
+            value={computeTemplate}
+            spacing={2}
+            onChange={(e, newValue) => {
+              setComputeTemplate(newValue);
+            }}
+            className="flex-wrap"
+          >
+            {computeTemplateButtons.map((button) => (
+              <Button
+                className="flex flex-col items-start justify-start py-3"
+                value={button.value}
+                key={button.value}
+              >
+                <Stack
+                  direction="row"
+                  width={120}
+                  gap={1}
+                  alignItems="center"
+                  marginBottom={0.7}
+                >
+                  {button.icon}
+                  <Typography level="title-md">{button.title}</Typography>
+                </Stack>
+                <Typography level="body-xs" textAlign="left" width={120}>
+                  {button.description}
+                </Typography>
+              </Button>
+            ))}
+          </ToggleButtonGroup>
+          {computeTemplate === "custom" && (
+            <Stack direction="row" gap={2} mt={2}>
+              <FormControl sx={{ flex: 1 }}>
+                <FormLabel>Choose template: </FormLabel>
+                <Select
+                  value={customComputeTemplate}
+                  onChange={(e, newValue) =>
+                    setCustomComputeTemplate(newValue!)
+                  }
+                >
+                  <Option value="new-template">Create new template</Option>
+                  <Option value="default-template">default-template</Option>
+                </Select>
+              </FormControl>
+              {customComputeTemplate === "new-template" && (
+                <FormControl sx={{ flex: 1 }}>
+                  <FormLabel>New template name:</FormLabel>
+                  <Input placeholder="new-template-name" />
+                </FormControl>
+              )}
+            </Stack>
           )}
+          {/* <Divider sx={{ mt: 2 }} /> */}
           <AccordionGroup
             disableDivider
             sx={{
@@ -214,122 +242,91 @@ export const CreateJobForm = () => {
               },
             }}
           >
-            <Accordion sx={{ mb: 1 }} defaultExpanded>
+            <Accordion sx={{ mb: 1 }}>
               <AccordionSummary>Head Node</AccordionSummary>
               <AccordionDetails sx={{ mt: 0.5 }}>
                 <Divider />
                 <Typography level="title-md" mt={1.5}>
-                  Resources
+                  Requests
                 </Typography>
-                <Stack direction="row" gap={2} mt={0.5} mb={2} flexWrap="wrap">
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                <Stack direction="row" gap={2} mt={0.5}>
+                  <FormControl size="sm">
                     <FormLabel>CPU Cores</FormLabel>
-                    <Input
-                      value={headCpu}
-                      onChange={(e) => setHeadCpu(e.target.value)}
-                    />
+                    <Input value="2" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>Memory</FormLabel>
-                    <Input
-                      value={headMemory}
-                      onChange={(e) => setHeadMemory(e.target.value)}
-                    />
+                    <Input value="4" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>GPU</FormLabel>
-                    <Input
-                      value={headGpu}
-                      onChange={(e) => setHeadGpu(e.target.value)}
-                    />
+                    <Input value="0" />
+                  </FormControl>
+                </Stack>
+                <Typography level="title-md" mt={1.5}>
+                  Limits
+                </Typography>
+                <Stack direction="row" gap={2} mt={0.5} mb={2}>
+                  <FormControl size="sm">
+                    <FormLabel>CPU Cores</FormLabel>
+                    <Input value="4" />
+                  </FormControl>
+                  <FormControl size="sm">
+                    <FormLabel>Memory</FormLabel>
+                    <Input value="5" />
                   </FormControl>
                 </Stack>
               </AccordionDetails>
             </Accordion>
-            <Accordion defaultExpanded>
+            <Accordion>
               <AccordionSummary>Worker Nodes</AccordionSummary>
               <AccordionDetails sx={{ mt: 0.5 }}>
                 <Divider />
                 <Typography level="title-md" mt={1.5}>
                   Replicas
                 </Typography>
-                <Stack direction="row" gap={2} mt={0.5} flexWrap="wrap">
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                <Stack direction="row" gap={2} mt={0.5}>
+                  <FormControl size="sm">
                     <FormLabel>Desired replicas</FormLabel>
-                    <Input
-                      type="number"
-                      value={workerReplicas}
-                      onChange={(e) => setWorkerReplicas(e.target.value)}
-                    />
+                    <Input value="1" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>Min replicas</FormLabel>
-                    <Input
-                      type="number"
-                      value={workerMinReplicas}
-                      onChange={(e) => setWorkerMinReplicas(e.target.value)}
-                    />
+                    <Input value="0" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>Max replicas</FormLabel>
-                    <Input
-                      type="number"
-                      value={workerMaxReplicas}
-                      onChange={(e) => setWorkerMaxReplicas(e.target.value)}
-                    />
+                    <Input value="2" />
                   </FormControl>
                 </Stack>
                 <Typography level="title-md" mt={1.5}>
-                  Resources
+                  Requests
                 </Typography>
-                <Stack direction="row" gap={2} mt={0.5} mb={2} flexWrap="wrap">
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                <Stack direction="row" gap={2} mt={0.5}>
+                  <FormControl size="sm">
                     <FormLabel>CPU Cores</FormLabel>
-                    <Input
-                      value={workerCpu}
-                      onChange={(e) => setWorkerCpu(e.target.value)}
-                    />
+                    <Input value="2" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>Memory</FormLabel>
-                    <Input
-                      value={workerMemory}
-                      onChange={(e) => setWorkerMemory(e.target.value)}
-                    />
+                    <Input value="4" />
                   </FormControl>
-                  <FormControl
-                    size="sm"
-                    sx={{ flex: "1 1 150px", minWidth: "150px" }}
-                  >
+                  <FormControl size="sm">
                     <FormLabel>GPU</FormLabel>
-                    <Input
-                      value={workerGpu}
-                      onChange={(e) => setWorkerGpu(e.target.value)}
-                    />
+                    <Input value="0" />
+                  </FormControl>
+                </Stack>
+                <Typography level="title-md" mt={1.5}>
+                  Limits
+                </Typography>
+                <Stack direction="row" gap={2} mt={0.5} mb={2}>
+                  <FormControl size="sm">
+                    <FormLabel>CPU Cores</FormLabel>
+                    <Input value="4" />
+                  </FormControl>
+                  <FormControl size="sm">
+                    <FormLabel>Memory</FormLabel>
+                    <Input value="5" />
                   </FormControl>
                 </Stack>
               </AccordionDetails>
@@ -341,14 +338,14 @@ export const CreateJobForm = () => {
         <Button
           className={"bg-[#0B6BCB]"}
           disabled={
-            !(jobName && dockerImage && entrypoint && areResourcesFilled)
+            !(jobName && dockerImage && computeTemplate && computeTemplate)
           }
           onClick={handleCreateJob}
           loading={creating}
         >
           Create Job
         </Button>
-        <Button variant="outlined" color="neutral" onClick={handleCancel}>
+        <Button variant="outlined" color="neutral">
           Cancel
         </Button>
       </Stack>

@@ -75,13 +75,12 @@ func NewGetNodesCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IO
 	options := NewGetNodesOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:               "node [NODE] [(-c|--ray-cluster) RAYCLUSTER]",
-		Aliases:           []string{"nodes"},
-		Short:             "Get Ray nodes",
-		Example:           getNodesExample,
-		SilenceUsage:      true,
-		Args:              cobra.MaximumNArgs(1),
-		ValidArgsFunction: completion.NodeCompletionFunc(cmdFactory),
+		Use:          "node [NODE] [(-c|--ray-cluster) RAYCLUSTER]",
+		Aliases:      []string{"nodes"},
+		Short:        "Get Ray nodes",
+		Example:      getNodesExample,
+		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.Complete(args, cmd); err != nil {
 				return err
@@ -232,7 +231,7 @@ func printNodes(nodes []node, allNamespaces bool, output io.Writer) error {
 		if allNamespaces {
 			row.Cells = append(row.Cells, node.namespace)
 		}
-		row.Cells = append(row.Cells, []any{
+		row.Cells = append(row.Cells, []interface{}{
 			node.name,
 			node.cpus.String(),
 			node.gpus.String(),

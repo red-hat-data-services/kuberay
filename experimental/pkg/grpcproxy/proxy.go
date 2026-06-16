@@ -8,7 +8,7 @@ import (
 )
 
 // NewProxy sets up a simple proxy that forwards all requests to dst.
-func NewProxy(dst *grpc.ClientConn, opts ...grpc.ServerOption) (*grpc.Server, *Handler) {
+func NewProxy(dst *grpc.ClientConn, opts ...grpc.ServerOption) (*grpc.Server, *handler) {
 	option, h := DefaultProxyOpt(dst)
 	opts = append(opts, option)
 	// Set up the proxy server and then serve from it like in step one.
@@ -16,7 +16,7 @@ func NewProxy(dst *grpc.ClientConn, opts ...grpc.ServerOption) (*grpc.Server, *H
 }
 
 // DefaultProxyOpt returns an grpc.UnknownServiceHandler with a DefaultDirector.
-func DefaultProxyOpt(cc *grpc.ClientConn) (grpc.ServerOption, *Handler) {
+func DefaultProxyOpt(cc *grpc.ClientConn) (grpc.ServerOption, *handler) {
 	sh, h := TransparentHandler(DefaultDirector(cc))
 	return grpc.UnknownServiceHandler(sh), h
 }
@@ -24,7 +24,7 @@ func DefaultProxyOpt(cc *grpc.ClientConn) (grpc.ServerOption, *Handler) {
 // DefaultDirector returns a very simple forwarding StreamDirector that forwards all
 // calls.
 func DefaultDirector(cc *grpc.ClientConn) StreamDirector {
-	return func(ctx context.Context, _ string) (context.Context, *grpc.ClientConn, error) {
+	return func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
 		ctx = metadata.NewOutgoingContext(ctx, md.Copy())
 		return ctx, cc, nil

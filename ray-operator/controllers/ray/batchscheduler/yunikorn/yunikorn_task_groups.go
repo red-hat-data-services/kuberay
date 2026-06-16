@@ -5,10 +5,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/utils/ptr"
 
 	v1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
-	"github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 )
 
@@ -35,11 +33,11 @@ func newTaskGroups() *TaskGroups {
 	}
 }
 
-func newTaskGroupsFromRayClusterSpec(rayClusterSpec *v1.RayClusterSpec) *TaskGroups {
+func newTaskGroupsFromApp(app *v1.RayCluster) *TaskGroups {
 	taskGroups := newTaskGroups()
 
 	// head group
-	headGroupSpec := rayClusterSpec.HeadGroupSpec
+	headGroupSpec := app.Spec.HeadGroupSpec
 	headPodMinResource := utils.CalculatePodResource(headGroupSpec.Template.Spec)
 	taskGroups.addTaskGroup(
 		TaskGroup{
@@ -52,14 +50,13 @@ func newTaskGroupsFromRayClusterSpec(rayClusterSpec *v1.RayClusterSpec) *TaskGro
 		})
 
 	// worker groups
-	for _, workerGroupSpec := range rayClusterSpec.WorkerGroupSpecs {
+	for _, workerGroupSpec := range app.Spec.WorkerGroupSpecs {
 		workerMinResource := utils.CalculatePodResource(workerGroupSpec.Template.Spec)
-		minReplicas := ptr.Deref(workerGroupSpec.MinReplicas, int32(0))
-		minWorkers := minReplicas * workerGroupSpec.NumOfHosts
+		minWorkers := workerGroupSpec.MinReplicas
 		taskGroups.addTaskGroup(
 			TaskGroup{
 				Name:         workerGroupSpec.GroupName,
-				MinMember:    minWorkers,
+				MinMember:    *minWorkers,
 				MinResource:  utils.ConvertResourceListToMapString(workerMinResource),
 				NodeSelector: workerGroupSpec.Template.Spec.NodeSelector,
 				Tolerations:  workerGroupSpec.Template.Spec.Tolerations,
@@ -70,22 +67,8 @@ func newTaskGroupsFromRayClusterSpec(rayClusterSpec *v1.RayClusterSpec) *TaskGro
 	return taskGroups
 }
 
-func newTaskGroupsFromRayJobSpec(rayJobSpec *v1.RayJobSpec) *TaskGroups {
-	taskGroups := newTaskGroupsFromRayClusterSpec(rayJobSpec.RayClusterSpec)
-
-	submitterGroupSpec := common.GetSubmitterTemplate(rayJobSpec, rayJobSpec.RayClusterSpec).Spec
-
-	submitterPodMinResource := utils.CalculatePodResource(submitterGroupSpec)
-	taskGroups.addTaskGroup(
-		TaskGroup{
-			Name:         utils.RayNodeSubmitterGroupLabelValue,
-			MinMember:    1,
-			MinResource:  utils.ConvertResourceListToMapString(submitterPodMinResource),
-			NodeSelector: submitterGroupSpec.NodeSelector,
-			Tolerations:  submitterGroupSpec.Tolerations,
-			Affinity:     submitterGroupSpec.Affinity,
-		})
-	return taskGroups
+func (t *TaskGroups) size() int {
+	return len(t.Groups)
 }
 
 func (t *TaskGroups) addTaskGroup(taskGroup TaskGroup) {

@@ -57,7 +57,7 @@ fumpt: gofumpt ## Run gofmtumpt against code.
 
 .PHONY: lint
 lint: golangci-lint fmt vet fumpt ## Run the linter.
-	$(GOLANGCI_LINT) run  --timeout=3m
+	$(GOLANGCI_LINT) run  --timeout=3m --no-config
 
 build: fmt vet fumpt lint ## Build api server binary.
 	go build  -o ${REPO_ROOT_BIN}/kuberay-apiserver-proxy cmd/main.go
@@ -69,12 +69,6 @@ docker-image: ## Build image for the security proxy.
 
 docker-push: ## Push image for the api server.
 	$(ENGINE) push ${IMG}
-
-docker-multi-arch-build: ## Build multi arch image, amd64 and arm64 currently.
-	$(ENGINE) buildx build --platform linux/amd64,linux/arm64 -t ${IMG} -f Dockerfile.buildx ..
-
-docker-multi-arch-push: ## Build and Push multi arch image, amd64 and arm64 currently.
-	$(ENGINE) buildx build --push --platform linux/amd64,linux/arm64 -t ${IMG} -f Dockerfile.buildx ..
 
 ##@ Development Tools Setup
 
@@ -91,24 +85,24 @@ GOBINDATA ?= $(REPO_ROOT_BIN)/go-bindata
 ## Tool Versions
 GOFUMPT_VERSION ?= v0.3.1
 GOIMPORTS_VERSION ?= v0.14.0
-GOLANGCI_LINT_VERSION ?= v2.7.2
+GOLANGCI_LINT_VERSION ?= v1.64.8
 KIND_VERSION ?= v0.19.0
 GOBINDATA_VERSION ?= v4.0.2
 
 .PHONY: gofumpt
 gofumpt: $(GOFUMPT) ## Download gofumpt locally if necessary.
 $(GOFUMPT): $(REPO_ROOT_BIN)
-	test -s $(GOFUMPT) || GOBIN=$(REPO_ROOT_BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	-s $(GOFUMPT) || GOBIN=$(REPO_ROOT_BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci_lint locally if necessary.
 $(GOLANGCI_LINT): $(REPO_ROOT_BIN)
-	test -s $(GOLANGCI_LINT) || (curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | bash -s -- -b $(REPO_ROOT_BIN)/ $(GOLANGCI_LINT_VERSION))
+	-s $(GOLANGCI_LINT) || (curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | bash -s -- -b $(REPO_ROOT_BIN)/ $(GOLANGCI_LINT_VERSION))
 
 .PHONY: go-bindata
 go-bindata: $(GOBINDATA) ## Download the go-bindata executable if necessary.
 $(GOBINDATA): $(REPO_ROOT_BIN)
-	test -s $(GOBINDATA) || GOBIN=$(REPO_ROOT_BIN) go install github.com/kevinburke/go-bindata/v4/...@$(GOBINDATA_VERSION)
+	-s $(GOBINDATA) || GOBIN=$(REPO_ROOT_BIN) go install github.com/kevinburke/go-bindata/v4/...@$(GOBINDATA_VERSION)
 
 .PHONY: dev-tools
 dev-tools: golangci-lint gofumpt go-bindata ## Install all development tools
