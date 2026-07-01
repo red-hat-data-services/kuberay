@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -52,11 +54,33 @@ const (
 
 	oauthConfigVolumeName = "oauth-config"
 
-	oidcProxyContainerName  = "kube-rbac-proxy"
-	oidcProxyPortName       = "https"
-	oauthProxyImage         = "registry.redhat.io/openshift4/ose-oauth-proxy:latest"
-	oidcProxyContainerImage = "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:11828cdb31cd9c1e15bc9e31c7e4669daf71c84c028cad2df5dbab68150da273"
+	oidcProxyContainerName = "kube-rbac-proxy"
+	oidcProxyPortName      = "https"
+	oauthProxyImage        = "registry.redhat.io/openshift4/ose-oauth-proxy:latest"
+
+	// defaultOIDCProxyContainerImage is the fallback image used when no RELATED_IMAGE_*
+	// env var is set. Must match an entry in the RHOAI CSV relatedImages so it is
+	// mirrored correctly in disconnected environments.
+	defaultOIDCProxyContainerImage = "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:11828cdb31cd9c1e15bc9e31c7e4669daf71c84c028cad2df5dbab68150da273"
 )
+
+// oidcProxyContainerImage holds the resolved kube-rbac-proxy image. Populated by
+// init() from the operator's env vars so that disconnected installs can override
+// the image via RELATED_IMAGE_ODH_KUBE_AUTH_PROXY_IMAGE (set in manager.yaml and
+// substituted by the deployer from the RHOAI CSV relatedImages at install time).
+var oidcProxyContainerImage = defaultOIDCProxyContainerImage
+
+func init() {
+	for _, envVar := range []string{
+		"RELATED_IMAGE_ODH_KUBE_AUTH_PROXY_IMAGE",
+		"RELATED_IMAGE_OSE_KUBE_RBAC_PROXY_IMAGE",
+	} {
+		if image := strings.TrimSpace(os.Getenv(envVar)); image != "" {
+			oidcProxyContainerImage = image
+			return
+		}
+	}
+}
 
 // AuthenticationController is a completely independent controller that watches authentication-related
 // resources (ConfigMaps, ServiceAccounts, OpenShift Routes) and manages authentication configurations for Ray clusters on Openshift.
