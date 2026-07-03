@@ -15,8 +15,8 @@ EXTRA_ARGS=()
 # Tier definitions: each tier maps to Go package paths and a test-name regex fragment.
 declare -A TIER_PACKAGES TIER_REGEX
 
-TIER_PACKAGES[Tier1]="./test/e2erayjob"
-TIER_REGEX[Tier1]="TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode"
+TIER_PACKAGES[Tier1]="./test/e2erayjob ./test/e2eautoscaler"
+TIER_REGEX[Tier1]="TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode|TestRayClusterAutoscaler"
 
 TIER_PACKAGES[Smoke]="./test/e2e"
 TIER_REGEX[Smoke]="TestRayClusterAuthOptions"
@@ -77,7 +77,11 @@ for TIER in "${TIER_LIST[@]}"; do
     [[ -z "$TIER" ]] && continue
     case "$TIER" in
         Tier1|Smoke)
-            echo "Adding $TIER kuberay e2e tests (packages: ${TIER_PACKAGES[$TIER]})"
+            if [[ "$TIER" == "Tier1" ]]; then
+                echo "Adding Tier1 kuberay e2e tests (including autoscaler, packages: ${TIER_PACKAGES[$TIER]})"
+            else
+                echo "Adding $TIER kuberay e2e tests (packages: ${TIER_PACKAGES[$TIER]})"
+            fi
             REGEX_PARTS+=("${TIER_REGEX[$TIER]}")
             SELECTED_TIERS+=("$TIER")
             read -ra tier_pkgs <<< "${TIER_PACKAGES[$TIER]}"
@@ -120,9 +124,18 @@ fi
 
 TEST_RUN_REGEX="^($(IFS='|'; echo "${REGEX_PARTS[*]}"))$"
 
+TEST_TIMEOUT="30m"
+for tier in "${SELECTED_TIERS[@]}"; do
+    if [[ "$tier" == "Tier1" ]]; then
+        TEST_TIMEOUT="60m"
+        break
+    fi
+done
+
 echo "Selected tiers: ${SELECTED_TIERS[*]}"
 echo "Test packages: ${TEST_PACKAGES[*]}"
 echo "Running e2e tests matching: $TEST_RUN_REGEX"
+echo "Test timeout: $TEST_TIMEOUT"
 
 # Run tests with junit XML output (single invocation across all packages)
-gotestsum --format standard-verbose --junitfile results/xunit_report.xml --junitfile-testsuite-name short --junitfile-testcase-classname relative -- -timeout 30m -run "$TEST_RUN_REGEX" "${TEST_PACKAGES[@]}" -p 1 -parallel 1 "${EXTRA_ARGS[@]}"
+gotestsum --format standard-verbose --junitfile results/xunit_report.xml --junitfile-testsuite-name short --junitfile-testcase-classname relative -- -timeout "$TEST_TIMEOUT" -run "$TEST_RUN_REGEX" "${TEST_PACKAGES[@]}" -p 1 -parallel 1 "${EXTRA_ARGS[@]}"
