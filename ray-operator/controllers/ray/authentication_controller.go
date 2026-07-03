@@ -2,15 +2,8 @@ package ray
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -49,34 +42,16 @@ const (
 	// Finalizer for ensuring cleanup of cross-namespace resources (HTTPRoutes)
 	authenticationFinalizer = "ray.io/authentication-resources"
 
-	// OAuth proxy constants
-	oauthProxyContainerName = "oauth-proxy"
-	oauthProxyVolumeName    = "proxy-tls-secret"
-	authProxyPort           = 8443
-	oauthProxyPortName      = "oauth-proxy"
-
-	oauthConfigVolumeName = "oauth-config"
+	authProxyPort = 8443
 
 	oidcProxyContainerName = "kube-rbac-proxy"
 	oidcProxyPortName      = "https"
-
-	// defaultOAuthProxyImage is the fallback image used when no RELATED_IMAGE_*
-	// env var is set. Must match an entry in the RHOAI CSV relatedImages so it is
-	// mirrored correctly in disconnected environments.
-	defaultOAuthProxyImage = "registry.redhat.io/openshift4/ose-oauth-proxy@sha256:bff1326159e0394e169c10575f33025590f5781cb2f1e16dfd5d204b7f7fb4bb"
 
 	// defaultOIDCProxyContainerImage is the fallback image used when no RELATED_IMAGE_*
 	// env var is set. Must match an entry in the RHOAI CSV relatedImages so it is
 	// mirrored correctly in disconnected environments.
 	defaultOIDCProxyContainerImage = "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:11828cdb31cd9c1e15bc9e31c7e4669daf71c84c028cad2df5dbab68150da273"
 )
-
-// oauthProxyImage holds the resolved oauth-proxy image. Populated by init()
-// from the operator's env vars so that disconnected installs can override the
-// image via RELATED_IMAGE_OSE_OAUTH_PROXY_IMAGE (injected on OpenShift via the
-// openshift overlay and substituted by the ODH/RHOAI operator from CSV
-// relatedImages).
-var oauthProxyImage = defaultOAuthProxyImage
 
 // oidcProxyContainerImage holds the resolved kube-rbac-proxy image. Populated by
 // init() from the operator's env vars so that disconnected installs can override
@@ -88,10 +63,6 @@ var oidcProxyContainerImage = defaultOIDCProxyContainerImage
 var errAutoscalerRoleBindingPending = errors.New("autoscaler RoleBinding not found yet")
 
 func init() {
-	if image := strings.TrimSpace(os.Getenv("RELATED_IMAGE_OSE_OAUTH_PROXY_IMAGE")); image != "" {
-		oauthProxyImage = image
-	}
-
 	for _, envVar := range []string{
 		"RELATED_IMAGE_ODH_KUBE_AUTH_PROXY_IMAGE",
 		"RELATED_IMAGE_OSE_KUBE_RBAC_PROXY_IMAGE",
@@ -954,112 +925,6 @@ func (r *AuthenticationController) ensureOAuthServiceAccount(ctx context.Context
 // You cannot add containers to running pods, so we don't try to retrofit existing pods
 // OAuth sidecar is automatically injected by RayCluster controller during pod creation
 // Users must delete and recreate their RayCluster to enable OAuth on existing clusters
-
-// generateSelfSignedCert generates a self-signed certificate for OAuth proxy
-func generateSelfSignedCert(cluster *rayv1.RayCluster) ([]byte, []byte, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization: []string{"KubeRay OAuth Proxy"},
-			CommonName:   cluster.Name + "-oauth-proxy",
-		},
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
-		DNSNames: []string{
-			"localhost",
-			cluster.Name,
-			fmt.Sprintf("%s.%s", cluster.Name, cluster.Namespace),
-			fmt.Sprintf("%s.%s.svc", cluster.Name, cluster.Namespace),
-			fmt.Sprintf("%s.%s.svc.cluster.local", cluster.Name, cluster.Namespace),
-		},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-
-	return certPEM, keyPEM, nil
-}
-
-// GetOAuthProxySidecar returns the OAuth proxy sidecar container configuration
-// This can be used by the RayCluster controller to inject the sidecar
-func GetOAuthProxySidecar(cluster *rayv1.RayCluster) corev1.Container {
-	namer := utils.NewResourceNamer(cluster)
-	return corev1.Container{
-		Name:            oauthProxyContainerName,
-		Image:           oauthProxyImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Ports: []corev1.ContainerPort{
-			utils.CreateContainerPort(authProxyPort, oauthProxyPortName),
-		},
-		Args: []string{
-			fmt.Sprintf("--https-address=:%d", authProxyPort),
-			"--provider=openshift",
-			fmt.Sprintf("--openshift-service-account=%s", namer.ServiceAccountName(utils.ModeIntegratedOAuth)),
-			"--upstream=http://localhost:8265",
-			"--tls-cert=/etc/tls/private/tls.crt",
-			"--tls-key=/etc/tls/private/tls.key",
-			"--cookie-secret=$(COOKIE_SECRET)",
-			fmt.Sprintf("--openshift-delegate-urls=%s", utils.FormatOAuthDelegateURLs(cluster.Namespace)),
-			"--skip-provider-button",
-		},
-		Env: []corev1.EnvVar{
-			utils.CreateEnvVarFromSecret("COOKIE_SECRET", namer.SecretName(utils.ModeIntegratedOAuth), "cookie_secret"),
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			utils.CreateVolumeMount(oauthProxyVolumeName, "/etc/tls/private", true),
-		},
-		// Add resource limits to prevent excessive resource usage
-		Resources: utils.StandardProxyResources(),
-		// Add liveness probe to detect if OAuth proxy is healthy
-		LivenessProbe: utils.CreateProbe(utils.ProbeConfig{
-			Path:                "/oauth/healthz",
-			Port:                authProxyPort,
-			Scheme:              corev1.URISchemeHTTPS,
-			InitialDelaySeconds: 30,
-			TimeoutSeconds:      1,
-			PeriodSeconds:       10,
-			SuccessThreshold:    1,
-			FailureThreshold:    3,
-		}),
-		// Add readiness probe to prevent routing traffic before OAuth proxy is ready
-		ReadinessProbe: utils.CreateProbe(utils.ProbeConfig{
-			Path:                "/oauth/healthz",
-			Port:                authProxyPort,
-			Scheme:              corev1.URISchemeHTTPS,
-			InitialDelaySeconds: 5,
-			TimeoutSeconds:      1,
-			PeriodSeconds:       5,
-			SuccessThreshold:    1,
-			FailureThreshold:    3,
-		}),
-	}
-}
-
-// GetOAuthProxyVolumes returns the volumes needed for OAuth proxy sidecar
-func GetOAuthProxyVolumes(cluster *rayv1.RayCluster) []corev1.Volume {
-	namer := utils.NewResourceNamer(cluster)
-	return []corev1.Volume{
-		utils.CreateSecretVolume(oauthConfigVolumeName, namer.SecretName(utils.ModeIntegratedOAuth)),
-		utils.CreateSecretVolume(oauthProxyVolumeName, namer.TLSSecretName(utils.ModeIntegratedOAuth)),
-	}
-}
 
 func GetOIDCProxySidecar(cluster *rayv1.RayCluster) corev1.Container {
 	namer := utils.NewResourceNamer(cluster)
