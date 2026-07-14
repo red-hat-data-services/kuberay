@@ -749,6 +749,14 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 		return nil
 	}
 
+	// Check if mTLS is enabled and verify certificate secrets are ready before creating pods
+	if r.isMTLSEnabled(instance) {
+		if err := r.checkMTLSSecretsReady(ctx, instance); err != nil {
+			logger.Info("mTLS secrets not ready yet, requeuing", "error", err.Error())
+			return fmt.Errorf("mTLS secrets not ready: %w", err)
+		}
+	}
+
 	// check if all the pods exist
 	headPods := corev1.PodList{}
 	if err := r.List(ctx, &headPods, common.RayClusterHeadPodsAssociationOptions(instance).ToListOptions()...); err != nil {
@@ -776,6 +784,13 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			"Ray container terminated status", getRayContainerStateTerminated(headPod))
 
 		shouldDelete, reason := shouldDeletePod(headPod, rayv1.HeadNode)
+
+		// Check if mTLS is enabled but pod doesn't have mTLS configuration
+		if !shouldDelete && r.isMTLSEnabled(instance) && !podHasMTLSConfiguration(headPod) {
+			shouldDelete = true
+			reason = fmt.Sprintf("mTLS is enabled but head Pod %s doesn't have mTLS configuration. Pod needs to be recreated with mTLS volumes and environment variables.", headPod.Name)
+		}
+
 		logger.Info("reconcilePods", "head Pod", headPod.Name, "shouldDelete", shouldDelete, "reason", reason)
 		if shouldDelete {
 			if err := r.Delete(ctx, &headPod); err != nil {
@@ -869,6 +884,13 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 		numDeletedUnhealthyWorkerPods := 0
 		for _, workerPod := range workerPods.Items {
 			shouldDelete, reason := shouldDeletePod(workerPod, rayv1.WorkerNode)
+
+			// Check if mTLS is enabled but pod doesn't have mTLS configuration
+			if !shouldDelete && r.isMTLSEnabled(instance) && !podHasMTLSConfiguration(workerPod) {
+				shouldDelete = true
+				reason = fmt.Sprintf("mTLS is enabled but worker Pod %s doesn't have mTLS configuration. Pod needs to be recreated with mTLS volumes and environment variables.", workerPod.Name)
+			}
+
 			logger.Info("reconcilePods", "worker Pod", workerPod.Name, "shouldDelete", shouldDelete, "reason", reason)
 			if shouldDelete {
 				numDeletedUnhealthyWorkerPods++
@@ -1502,9 +1524,22 @@ func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.
 	if len(r.options.HeadSidecarContainers) > 0 {
 		podConf.Spec.Containers = append(podConf.Spec.Containers, r.options.HeadSidecarContainers...)
 	}
+
+	// Configure mTLS if enabled
+	if r.isMTLSEnabled(&instance) {
+		logger.Info("mTLS is enabled, configuring mTLS for head pod")
+		r.configureMTLSForPod(&podConf, instance)
+	}
+
 	logger.Info("head pod labels", "labels", podConf.Labels)
 	creatorCRDType := getCreatorCRDType(instance)
 	pod := common.BuildPod(ctx, podConf, rayv1.HeadNode, instance.Spec.HeadGroupSpec.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP, r.options.DefaultContainerEnvs, instance.Spec.RayVersion)
+	if r.isMTLSEnabled(&instance) {
+		// With mTLS, --node-ip-address is the head service FQDN (see setMissingRayStartParams).
+		// Inject loopback RAY_ADDRESS after BuildPod so ray-head and autoscaler connect to GCS
+		// via 127.0.0.1, avoiding TLS SNI failures when using the pod IP.
+		r.injectMTLSLoopbackRayAddress(&pod, headPort)
+	}
 	// Set raycluster instance as the owner and controller
 	if err := controllerutil.SetControllerReference(&instance, &pod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference for raycluster pod")
@@ -1530,6 +1565,13 @@ func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv
 	if len(r.options.WorkerSidecarContainers) > 0 {
 		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers, r.options.WorkerSidecarContainers...)
 	}
+
+	// Configure mTLS if enabled
+	if r.isMTLSEnabled(&instance) {
+		logger.Info("mTLS is enabled, configuring mTLS for worker pod")
+		r.configureMTLSForPod(&podTemplateSpec, instance)
+	}
+
 	creatorCRDType := getCreatorCRDType(instance)
 	pod := common.BuildPod(ctx, podTemplateSpec, rayv1.WorkerNode, worker.RayStartParams, headPort, autoscalingEnabled, creatorCRDType, fqdnRayIP, r.options.DefaultContainerEnvs, instance.Spec.RayVersion)
 	// Set raycluster instance as the owner and controller
@@ -1538,6 +1580,245 @@ func (r *RayClusterReconciler) buildWorkerPod(ctx context.Context, instance rayv
 	}
 
 	return pod
+}
+
+// isMTLSEnabled checks if mTLS is enabled for this RayCluster via annotation
+func (r *RayClusterReconciler) isMTLSEnabled(instance *rayv1.RayCluster) bool {
+	// Check if the cluster explicitly enables or disables mTLS via annotation
+	if instance.Annotations != nil {
+		if value, exists := instance.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey]; exists {
+			return value == "true"
+		}
+	}
+	// Default to disabled if no annotation is set
+	return false
+}
+
+// configureMTLSForPod configures mTLS settings for a pod template if mTLS is enabled
+func (r *RayClusterReconciler) configureMTLSForPod(podTemplate *corev1.PodTemplateSpec, instance rayv1.RayCluster) {
+	// Determine the appropriate secret name based on node type
+	// We can determine this from the pod labels or container name
+	var secretName string
+	var isWorker bool
+	if podTemplate.Labels != nil && podTemplate.Labels[utils.RayNodeTypeLabelKey] == string(rayv1.HeadNode) {
+		isWorker = false
+		secretName = fmt.Sprintf("ray-head-secret-%s", instance.Name)
+	} else {
+		isWorker = true
+		secretName = fmt.Sprintf("ray-worker-secret-%s", instance.Name)
+	}
+
+	for i := range podTemplate.Spec.Containers {
+		// Add TLS environment variables
+		r.addTLSEnvironmentVariables(&podTemplate.Spec.Containers[i], isWorker)
+		// Add certificate volume mounts
+		r.addCertVolumeMounts(&podTemplate.Spec.Containers[i])
+	}
+
+	// Add mTLS configuration to init containers as well
+	for i := range podTemplate.Spec.InitContainers {
+		// Add TLS environment variables
+		r.addTLSEnvironmentVariables(&podTemplate.Spec.InitContainers[i], isWorker)
+		// Add certificate volume mounts
+		r.addCertVolumeMounts(&podTemplate.Spec.InitContainers[i])
+	}
+
+	// Prepend an init container on both head and worker pods that waits until the
+	// TLS certificate issued by cert-manager includes the pod's actual IP as an IP SAN.
+	// Without this, there is a race condition: cert-manager issues the initial certificate
+	// before the pod IP is known, so the raylet starts and immediately tries to register
+	// with GCS using the pod IP — which is not yet in the cert — causing TLS handshake
+	// failures ("No match found for server name: <pod_ip>"). This affects workers on every
+	// autoscaling scale-out event, not only the initial cluster startup.
+	// The init container must run before wait-gcs-ready since that also makes a mTLS connection.
+	if len(podTemplate.Spec.Containers) > 0 {
+		certPath := "/home/ray/workspace/tls/tls.crt"
+		waitScript := fmt.Sprintf(`CERT="%s"
+DEADLINE=$(( $(date +%%s) + 300 ))
+echo "Waiting for TLS cert to include IP SAN for ${POD_IP} (timeout 300s)..."
+while true; do
+  if [ -z "${POD_IP}" ]; then
+    echo "Pod IP not yet assigned, retrying in 5s..."
+    sleep 5
+    continue
+  fi
+  if openssl x509 -in "${CERT}" -noout -text 2>/dev/null | grep -qE "IP Address:${POD_IP}([^0-9.]|$)"; then
+    echo "TLS cert now includes IP SAN for ${POD_IP}"
+    exit 0
+  fi
+  if [ "$(date +%%s)" -ge "${DEADLINE}" ]; then
+    echo "Timed out waiting for IP SAN ${POD_IP} in TLS cert; cert-manager may not have reissued the certificate" >&2
+    exit 1
+  fi
+  echo "IP SAN for ${POD_IP} not yet in cert, retrying in 5s..."
+  sleep 5
+done`, certPath)
+		waitInitContainer := corev1.Container{
+			Name:  "wait-for-tls-ip-san",
+			Image: podTemplate.Spec.Containers[0].Image,
+			Env: []corev1.EnvVar{
+				{
+					Name: "POD_IP",
+					ValueFrom: &corev1.EnvVarSource{
+						FieldRef: &corev1.ObjectFieldSelector{
+							FieldPath: "status.podIP",
+						},
+					},
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "ray-tls-vol",
+					MountPath: "/home/ray/workspace/tls",
+					ReadOnly:  true,
+				},
+			},
+			Command: []string{"sh", "-c"},
+			Args:    []string{waitScript},
+		}
+		podTemplate.Spec.InitContainers = append([]corev1.Container{waitInitContainer}, podTemplate.Spec.InitContainers...)
+	}
+
+	// Add CA volumes with proper secret references
+	r.addCAVolumes(&podTemplate.Spec, secretName)
+}
+
+// injectMTLSLoopbackRayAddress sets RAY_ADDRESS=127.0.0.1:port on ray-head and autoscaler.
+// Called only when mTLS is enabled for the RayCluster.
+func (r *RayClusterReconciler) injectMTLSLoopbackRayAddress(pod *corev1.Pod, headPort string) {
+	loopbackAddress := fmt.Sprintf("%s:%s", utils.LOCAL_HOST, headPort)
+	for i := range pod.Spec.Containers {
+		container := &pod.Spec.Containers[i]
+		if i != utils.RayContainerIndex && container.Name != common.AutoscalerContainerName {
+			continue
+		}
+		found := false
+		for j, env := range container.Env {
+			if env.Name == utils.RAY_ADDRESS {
+				container.Env[j].Value = loopbackAddress
+				found = true
+				break
+			}
+		}
+		if !found {
+			container.Env = append(container.Env, corev1.EnvVar{
+				Name:  utils.RAY_ADDRESS,
+				Value: loopbackAddress,
+			})
+		}
+	}
+}
+
+// addTLSEnvironmentVariables adds Ray TLS environment variables to a container
+func (r *RayClusterReconciler) addTLSEnvironmentVariables(container *corev1.Container, isWorker bool) {
+	// Check if this is a worker container by looking at the container name
+
+	if isWorker {
+		// Worker pods need both server and client TLS environment variables
+		tlsEnvVars := []corev1.EnvVar{
+			{Name: "RAY_USE_TLS", Value: "1"},
+			{Name: "RAY_TLS_SERVER_CERT", Value: "/home/ray/workspace/tls/tls.crt"},
+			{Name: "RAY_TLS_SERVER_KEY", Value: "/home/ray/workspace/tls/tls.key"},
+			{Name: "RAY_TLS_CA_CERT", Value: "/home/ray/workspace/tls/ca.crt"},
+		}
+		container.Env = append(container.Env, tlsEnvVars...)
+		return
+	}
+
+	// Head pods need all TLS environment variables (both server and client)
+	tlsEnvVars := []corev1.EnvVar{
+		{
+			Name: "MY_POD_IP",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "status.podIP",
+				},
+			},
+		},
+		{Name: "RAY_USE_TLS", Value: "1"},
+		{Name: "RAY_TLS_SERVER_CERT", Value: "/home/ray/workspace/tls/tls.crt"},
+		{Name: "RAY_TLS_SERVER_KEY", Value: "/home/ray/workspace/tls/tls.key"},
+		{Name: "RAY_TLS_CA_CERT", Value: "/home/ray/workspace/tls/ca.crt"},
+	}
+	container.Env = append(container.Env, tlsEnvVars...)
+}
+
+// checkMTLSSecretsReady verifies that the mTLS certificate secrets exist before creating pods
+func (r *RayClusterReconciler) checkMTLSSecretsReady(ctx context.Context, instance *rayv1.RayCluster) error {
+	headSecretName := fmt.Sprintf("ray-head-secret-%s", instance.Name)
+	workerSecretName := fmt.Sprintf("ray-worker-secret-%s", instance.Name)
+
+	// Check if head secret exists
+	headSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: headSecretName, Namespace: instance.Namespace}, headSecret); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("head certificate secret %s not found", headSecretName)
+		}
+		return fmt.Errorf("failed to get head certificate secret: %w", err)
+	}
+
+	// Check if worker secret exists
+	workerSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: workerSecretName, Namespace: instance.Namespace}, workerSecret); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("worker certificate secret %s not found", workerSecretName)
+		}
+		return fmt.Errorf("failed to get worker certificate secret: %w", err)
+	}
+
+	// Verify the secrets have the required keys
+	if _, ok := headSecret.Data["tls.crt"]; !ok {
+		return fmt.Errorf("head secret missing tls.crt")
+	}
+	if _, ok := headSecret.Data["tls.key"]; !ok {
+		return fmt.Errorf("head secret missing tls.key")
+	}
+	if _, ok := headSecret.Data["ca.crt"]; !ok {
+		return fmt.Errorf("head secret missing ca.crt")
+	}
+
+	if _, ok := workerSecret.Data["tls.crt"]; !ok {
+		return fmt.Errorf("worker secret missing tls.crt")
+	}
+	if _, ok := workerSecret.Data["tls.key"]; !ok {
+		return fmt.Errorf("worker secret missing tls.key")
+	}
+	if _, ok := workerSecret.Data["ca.crt"]; !ok {
+		return fmt.Errorf("worker secret missing ca.crt")
+	}
+
+	return nil
+}
+
+// addCAVolumes adds certificate volumes to a pod spec
+// The secret contains the TLS certificate, private key, and CA certificate
+// cert-manager automatically includes ca.crt in the certificate secret
+func (r *RayClusterReconciler) addCAVolumes(podSpec *corev1.PodSpec, secretName string) {
+	tlsVolumes := []corev1.Volume{
+		{
+			Name: "ray-tls-vol",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: secretName, // Contains tls.crt, tls.key, and ca.crt from cert-manager
+				},
+			},
+		},
+	}
+
+	podSpec.Volumes = append(podSpec.Volumes, tlsVolumes...)
+}
+
+// addCertVolumeMounts adds certificate volume mounts to a container
+func (r *RayClusterReconciler) addCertVolumeMounts(container *corev1.Container) {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "ray-tls-vol",
+			MountPath: "/home/ray/workspace/tls",
+			ReadOnly:  true,
+		},
+	}
+
+	container.VolumeMounts = append(container.VolumeMounts, volumeMounts...)
 }
 
 func (r *RayClusterReconciler) buildRedisCleanupJob(ctx context.Context, instance rayv1.RayCluster) batchv1.Job {
