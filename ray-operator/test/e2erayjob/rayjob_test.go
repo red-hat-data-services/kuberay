@@ -620,19 +620,33 @@ env_vars:
 	})
 
 	test.T().Run("RayJob PreRunningDeadlineSeconds expires during Waiting state", func(_ *testing.T) {
+		const preRunningDeadlineSeconds int32 = 300
+
 		rayJobAC := rayv1ac.RayJob("ttl-waiting", namespace.Name).
 			WithSpec(rayv1ac.RayJobSpec().
 				WithSubmissionMode(rayv1.InteractiveMode).
 				WithRayClusterSpec(NewRayClusterSpec()).
 				WithShutdownAfterJobFinishes(true).
-				WithPreRunningDeadlineSeconds(60)) // larger value to reach Initializing state first
+				WithPreRunningDeadlineSeconds(preRunningDeadlineSeconds))
 
 		rayJob, err := test.Client().Ray().RayV1().RayJobs(namespace.Name).Apply(test.Ctx(), rayJobAC, TestApplyOptions)
 		g.Expect(err).NotTo(HaveOccurred())
 
-		// First confirm it enters Waiting state
-		g.Eventually(RayJob(test, rayJob.Namespace, rayJob.Name), TestTimeoutShort).
+		// First confirm it enters Waiting state (generous deadline allows slow clusters to become Ready)
+		g.Eventually(RayJob(test, rayJob.Namespace, rayJob.Name), TestTimeoutLong).
 			Should(WithTransform(RayJobDeploymentStatus, Equal(rayv1.JobDeploymentStatusWaiting)))
+
+		// Backdate StartTime so the preRunningDeadlineSeconds check fires on the next reconcile
+		var getErr error
+		rayJob, getErr = GetRayJob(test, rayJob.Namespace, rayJob.Name)
+		g.Expect(getErr).NotTo(HaveOccurred())
+		g.Expect(rayJob.Status.StartTime).NotTo(BeNil())
+		pastStartTime := metav1.NewTime(
+			time.Now().Add(-time.Duration(preRunningDeadlineSeconds+5) * time.Second),
+		)
+		rayJob.Status.StartTime = &pastStartTime
+		_, err = test.Client().Ray().RayV1().RayJobs(namespace.Name).UpdateStatus(test.Ctx(), rayJob, metav1.UpdateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
 
 		// The RayJob will transition to `Failed` because it has passed `preRunningDeadlineSeconds`.
 		LogWithTimestamp(test.T(), "Waiting for RayJob %s/%s to be 'Failed'", rayJob.Namespace, rayJob.Name)
