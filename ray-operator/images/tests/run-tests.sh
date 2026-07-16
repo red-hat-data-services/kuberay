@@ -19,7 +19,7 @@ TIER_PACKAGES[Tier1]="./test/e2erayjob ./test/e2eautoscaler"
 TIER_REGEX[Tier1]="TestRayJobWithClusterSelector|TestRayJob|TestRayJobSuspend|TestRayJobLightWeightMode|TestRayClusterAutoscaler"
 
 TIER_PACKAGES[Smoke]="./test/e2e"
-TIER_REGEX[Smoke]="TestRayClusterAuthOptions"
+TIER_REGEX[Smoke]="TestRayClusterAuthenticationRhoai|TestRayClusterAuthOptions"
 
 # Function to show usage
 show_usage() {

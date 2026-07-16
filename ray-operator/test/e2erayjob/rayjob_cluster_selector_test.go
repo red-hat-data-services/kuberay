@@ -90,7 +90,7 @@ env_vars:
 	})
 
 	test.T().Run("RayJob should be created but not to be updated when managed externally", func(_ *testing.T) {
-		t.Parallel()
+		// // t.Parallel()
 
 		// RayJob
 		rayJobAC := rayv1ac.RayJob("managed-externally", namespace.Name).

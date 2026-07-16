@@ -1434,6 +1434,76 @@ func (r *RayClusterReconciler) createService(ctx context.Context, svc *corev1.Se
 func (r *RayClusterReconciler) createHeadPod(ctx context.Context, instance rayv1.RayCluster, clusterHash string) error {
 	logger := ctrl.LoggerFrom(ctx)
 
+	// Check if authentication is enabled and if the required resources are ready.
+	// This prevents a race condition where the pod is created before the AuthenticationController
+	// has created the required resources (ServiceAccount, HTTPRoute, etc.).
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
+	if shouldEnableAuth {
+		if features.Enabled(features.RayClusterStatusConditions) {
+			authReadyCondition := meta.FindStatusCondition(instance.Status.Conditions,
+				string(rayv1.AuthenticationReady))
+
+			// observedGeneration must match current generation so we don't act on stale conditions.
+			conditionStale := authReadyCondition != nil && authReadyCondition.ObservedGeneration != instance.Generation
+			conditionNotReady := authReadyCondition == nil || authReadyCondition.Status != metav1.ConditionTrue
+
+			if conditionNotReady || conditionStale {
+				reason := utils.AuthenticationPending
+				message := "Waiting for AuthenticationController to create authentication resources"
+				if authReadyCondition != nil {
+					reason = authReadyCondition.Reason
+					message = authReadyCondition.Message
+					if conditionStale {
+						message = fmt.Sprintf("Condition is stale (observedGeneration=%d, currentGeneration=%d): %s",
+							authReadyCondition.ObservedGeneration, instance.Generation, message)
+					}
+				}
+
+				var observedGen int64
+				if authReadyCondition != nil {
+					observedGen = authReadyCondition.ObservedGeneration
+				}
+				logger.Info("Waiting for authentication resources to be ready",
+					"condition", authReadyCondition,
+					"reason", reason,
+					"conditionStale", conditionStale,
+					"observedGeneration", observedGen,
+					"currentGeneration", instance.Generation,
+					"authMode", authMode)
+				r.Recorder.Eventf(&instance, corev1.EventTypeNormal,
+					string(utils.WaitingForAuthentication),
+					"Waiting for authentication resources: %s", message)
+
+				return fmt.Errorf("waiting for AuthenticationReady condition: %s", message)
+			}
+
+			logger.Info("AuthenticationReady condition is True and fresh, proceeding with pod creation",
+				"reason", authReadyCondition.Reason,
+				"observedGeneration", authReadyCondition.ObservedGeneration,
+				"authMode", authMode)
+		} else {
+			namer := utils.NewResourceNamer(&instance)
+			saName := namer.ServiceAccountName(authMode)
+			sa := &corev1.ServiceAccount{}
+			if err := r.Get(ctx, client.ObjectKey{Name: saName, Namespace: instance.Namespace}, sa); err != nil {
+				if errors.IsNotFound(err) {
+					logger.Info("Waiting for AuthenticationController to create ServiceAccount, will retry",
+						"serviceAccount", saName,
+						"namespace", instance.Namespace,
+						"authMode", authMode)
+					r.Recorder.Eventf(&instance, corev1.EventTypeNormal, string(utils.WaitingForServiceAccount),
+						"Waiting for ServiceAccount %s to be created by AuthenticationController", saName)
+					return fmt.Errorf("waiting for ServiceAccount %s to be created for authentication", saName)
+				}
+				return fmt.Errorf("failed to check ServiceAccount %s: %w", saName, err)
+			}
+			logger.Info("ServiceAccount exists, proceeding with pod creation",
+				"serviceAccount", saName,
+				"namespace", instance.Namespace)
+		}
+	}
+
 	// build the pod then create it
 	pod := r.buildHeadPod(ctx, instance)
 
@@ -1529,6 +1599,33 @@ func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.
 	if r.isMTLSEnabled(&instance) {
 		logger.Info("mTLS is enabled, configuring mTLS for head pod")
 		r.configureMTLSForPod(&podConf, instance)
+	}
+
+	// Detect authentication mode and inject kube-rbac-proxy sidecar when ODH secure network is enabled.
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	logger.Info("Detected authentication mode for pod creation", "mode", authMode, "cluster", instance.Name)
+
+	namer := utils.NewResourceNamer(&instance)
+	shouldEnableAuth := utils.ShouldEnableOAuth(&instance, authMode) || utils.ShouldEnableOIDC(&instance, authMode)
+	if shouldEnableAuth {
+		logger.Info("Injecting OIDC proxy sidecar (kube-rbac-proxy)", "cluster", instance.Name, "mode", authMode)
+
+		result := utils.InjectAuthSidecar(
+			&podConf.Spec,
+			&instance,
+			authMode,
+			GetOIDCProxySidecar,
+			GetOIDCProxyVolumes,
+			namer.ServiceAccountName(authMode),
+		)
+
+		if result.Injected {
+			logger.Info("Authentication sidecar injected successfully",
+				"cluster", instance.Name,
+				"authType", result.AuthType,
+				"serviceAccount", result.ServiceAccountName,
+				"containerCount", result.ContainerCount)
+		}
 	}
 
 	logger.Info("head pod labels", "labels", podConf.Labels)
