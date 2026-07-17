@@ -1,5 +1,12 @@
-# Global code owners - at least one approval from this group is required for all PRs
-# (when combined with branch protection rules requiring CODEOWNERS review)
+# See https://help.github.com/articles/about-codeowners/
+# for more info about CODEOWNERS file
 
-# Default owners for everything in the repo
-*       @pawelpaszki @laurafitzgerald @kryanbeane @CathalOConnorRH @chipspeak @szaher
+# It uses the same pattern rule for gitignore file,
+# see https://git-scm.com/docs/gitignore#_pattern_format.
+
+# ==== CRD ====
+# For API changes, please make sure the stake holders are aware of the changes.
+/ray-operator/apis/ @kevin85421 @andrewsykim @rueian
+
+# ==== Ray operator ====
+/ray-operator/controllers/ray/ @kevin85421 @andrewsykim @rueian @MortalHappiness

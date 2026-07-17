@@ -57,7 +57,7 @@ func NewGetClusterCommand(cmdFactory cmdutil.Factory, streams genericclioptions.
 			return options.Run(cmd.Context(), k8sClient)
 		},
 	}
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", options.allNamespaces, "If present, list the requested clusters across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested clusters across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
@@ -153,7 +153,7 @@ func printClusters(rayclusterList *rayv1.RayClusterList, output io.Writer) error
 			relevantConditionType = relevantCondition.Type
 		}
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
-			Cells: []interface{}{
+			Cells: []any{
 				raycluster.GetName(),
 				raycluster.GetNamespace(),
 				raycluster.Status.DesiredWorkerReplicas,

@@ -154,7 +154,7 @@ func TestInjectAuthSidecar(t *testing.T) {
 		assert.True(t, result.Injected)
 		assert.Equal(t, ModeOIDC, result.AuthType)
 		assert.Equal(t, 2, result.ContainerCount)
-		assert.Equal(t, "", result.ServiceAccountName)
+		assert.Empty(t, result.ServiceAccountName)
 		assert.Len(t, podSpec.Containers, 2)
 	})
 
@@ -266,11 +266,4 @@ func TestCreateEnvVarFromSecret(t *testing.T) {
 	assert.NotNil(t, envVar.ValueFrom.SecretKeyRef)
 	assert.Equal(t, "secret-name", envVar.ValueFrom.SecretKeyRef.Name)
 	assert.Equal(t, "secret-key", envVar.ValueFrom.SecretKeyRef.Key)
-}
-
-func TestFormatOAuthDelegateURLs(t *testing.T) {
-	result := FormatOAuthDelegateURLs("test-namespace")
-
-	expected := `{"/":{"resource":"pods","namespace":"test-namespace","verb":"get"}}`
-	assert.Equal(t, expected, result)
 }

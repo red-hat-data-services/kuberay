@@ -68,7 +68,8 @@ func storeContainerLog(t Test, namespace *corev1.Namespace, podName, containerNa
 	WriteToOutputDir(t, containerLogFileName, Log, bytes)
 }
 
-func ExecPodCmd(t Test, pod *corev1.Pod, containerName string, cmd []string) (bytes.Buffer, bytes.Buffer) {
+// execPodCmd is the core implementation that always returns the error from the command execution in the pod.
+func execPodCmd(t Test, pod *corev1.Pod, containerName string, cmd []string) (bytes.Buffer, bytes.Buffer, error) {
 	req := t.Client().Core().CoreV1().RESTClient().
 		Post().
 		Resource("pods").
@@ -99,8 +100,26 @@ func ExecPodCmd(t Test, pod *corev1.Pod, containerName string, cmd []string) (by
 	})
 	LogWithTimestamp(t.T(), "Command stdout: %s", stdout.String())
 	LogWithTimestamp(t.T(), "Command stderr: %s", stderr.String())
-	require.NoError(t.T(), err)
+
+	return stdout, stderr, err
+}
+
+// ExecPodCmd is a wrapper that allows the caller to specify whether to allow the command to fail.
+func ExecPodCmd(t Test, pod *corev1.Pod, containerName string, cmd []string, allowError ...bool) (bytes.Buffer, bytes.Buffer) {
+	stdout, stderr, err := execPodCmd(t, pod, containerName, cmd)
+
+	shouldAllowError := len(allowError) > 0 && allowError[0]
+	if !shouldAllowError {
+		require.NoError(t.T(), err, "Command failed unexpectedly")
+	}
+
 	return stdout, stderr
+}
+
+// ExecPodCmdWithError is a wrapper that always returns the error from the command execution in the pod.
+// Since it propagates the error, it's safe to call this function from any goroutine,
+func ExecPodCmdWithError(t Test, pod *corev1.Pod, containerName string, cmd []string) (bytes.Buffer, bytes.Buffer, error) {
+	return execPodCmd(t, pod, containerName, cmd)
 }
 
 func SetupPortForward(t Test, podName, namespace string, localPort, remotePort int) (chan struct{}, error) {
@@ -147,7 +166,7 @@ func SetupPortForward(t Test, podName, namespace string, localPort, remotePort i
 	return stopChan, nil
 }
 
-func CreateCurlPod(t Test, podName, containerName, namespace string) (*corev1.Pod, error) {
+func CreateCurlPod(g *gomega.WithT, t Test, podName, containerName, namespace string) (*corev1.Pod, error) {
 	// Define the podSpec spec
 	podSpec := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -164,5 +183,16 @@ func CreateCurlPod(t Test, podName, containerName, namespace string) (*corev1.Po
 			},
 		},
 	}
-	return t.Client().Core().CoreV1().Pods(namespace).Create(t.Ctx(), podSpec, metav1.CreateOptions{})
+
+	curlPod, err := t.Client().Core().CoreV1().Pods(namespace).Create(t.Ctx(), podSpec, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	// Wait until curl pod is created
+	g.Eventually(func(g gomega.Gomega) *corev1.Pod {
+		updatedCurlPod, err := t.Client().Core().CoreV1().Pods(curlPod.Namespace).Get(t.Ctx(), curlPod.Name, metav1.GetOptions{})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		return updatedCurlPod
+	}, TestTimeoutShort).Should(gomega.WithTransform(IsPodRunningAndReady, gomega.BeTrue()))
+
+	LogWithTimestamp(t.T(), "Curl pod %s/%s is running and ready", curlPod.Namespace, curlPod.Name)
+	return t.Client().Core().CoreV1().Pods(curlPod.Namespace).Get(t.Ctx(), curlPod.Name, metav1.GetOptions{})
 }

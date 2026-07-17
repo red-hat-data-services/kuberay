@@ -59,6 +59,10 @@ help: ## Display this help.
 .PHONY: start-local-apiserver
 start-local-apiserver: operator-image cluster load-operator-image deploy-operator install ## Build and start apiserver from scratch.
 
+# Build and start apiserver and curl from scratch.
+.PHONY: start-local-apiserver-e2e
+start-local-apiserver-e2e: operator-image cluster load-operator-image deploy-operator install-apiserver-e2e
+
 .PHONY: clear-local-apiserver
 clear-local-apiserver: clean-cluster ## Clear local apiserver.
 
@@ -80,10 +84,11 @@ fumpt: gofumpt ## Run gofmtumpt against code.
 imports: goimports ## Run goimports against code.
 	$(GOIMPORTS) -l -w .
 
+# Exclude the SA1019 check which checks the usage of deprecated fields
+# via the linters.settings.staticcheck.checks configuration in .golangci.yaml.
 .PHONY: lint
 lint: golangci-lint fmt vet fumpt imports ## Run the linter.
-	# exclude the SA1019 check which checks the usage of deprecated fields.
-	test -s $(GOLANGCI_LINT) || ($(GOLANGCI_LINT) run --timeout=3m --exclude='SA1019' --no-config --allow-parallel-runners)
+	test -s $(GOLANGCI_LINT) || ($(GOLANGCI_LINT) run --timeout=3m --allow-parallel-runners)
 
 build: fmt vet fumpt imports ## Build api server binary.
 	go build -o ${REPO_ROOT_BIN}/kuberay-apiserver cmd/main.go
@@ -102,6 +107,11 @@ generate: mockgen # Generate code using command after //go:generate in each file
 
 ##@ Testing
 
+# TODO: Remove this once a fix for https://github.com/golang/go/issues/75031 is released.
+# This is a workaround for an issue where `go test -cover` reports errors for packages with no test files.
+GOVERSION := $(shell go env GOVERSION)
+export GOTOOLCHAIN := $(GOVERSION)+auto
+
 .PHONY: test
 test: fmt vet fumpt imports generate ## Run all unit tests.
 	go test ./pkg/... $(GO_TEST_FLAGS) -race -coverprofile ray-kube-api-server-coverage.out -parallel 4
@@ -116,7 +126,7 @@ e2e-test: ## Run end to end tests using a pre-existing cluster.
 # 4. Run the end to end tests.
 # 5. Clean up the cluster.
 .PHONY: local-e2e-test
-local-e2e-test: clean-cluster start-local-apiserver load-ray-test-image e2e-test clean-cluster
+local-e2e-test: clean-cluster start-local-apiserver-e2e load-ray-test-image e2e-test clean-cluster
 
 ##@ Testing Setup
 KIND_CONFIG ?= hack/kind-cluster-config.yaml
@@ -184,15 +194,31 @@ docker-image: test ## Build image for the api server.
 docker-push: ## Push image for the api server.
 	$(ENGINE) push ${IMG}
 
+docker-multi-arch-build: test ## Build multi arch image, amd64 and arm64 currently.
+	$(ENGINE) buildx build --platform linux/amd64,linux/arm64 -t ${IMG} -f Dockerfile.buildx ..
+
+docker-multi-arch-push: test ## Build and Push multi arch image, amd64 and arm64 currently.
+	$(ENGINE) buildx build --push --platform linux/amd64,linux/arm64 -t ${IMG} -f Dockerfile.buildx ..
+
 ##@ Deployment
 .PHONY: install
 install: kustomize docker-image load-image  ## Install the kuberay api server without security to the K8s cluster specified in ~/.kube/config.
 	cd deploy/local/insecure && $(KUSTOMIZE) edit set image kuberay/apiserver=$(IMG)
 	$(KUSTOMIZE) build deploy/local/insecure | kubectl create -f -
 
+# Install apiserver and curl for e2e test
+.PHONY: install-apiserver-e2e
+install-apiserver-e2e: kustomize docker-image load-image  ## Install the kuberay api server without security to the K8s cluster specified in ~/.kube/config.
+	cd deploy/local/e2e && $(KUSTOMIZE) edit set image kuberay/apiserver=$(IMG)
+	$(KUSTOMIZE) build deploy/local/e2e | kubectl create -f -
+
 .PHONY: uninstall
 uninstall: ## Remove the kuberay api server without security server from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build deploy/local/insecure | kubectl delete -f -
+
+.PHONY: uninstall-apiserver-e2e
+uninstall-apiserver-e2e: ## Remove the kuberay api server for e2e from the K8s cluster specified in ~/.kube/config.
+	$(KUSTOMIZE) build deploy/local/e2e | kubectl delete -f -
 
 .PHONY: install-secure
 install-secure: kustomize docker-image security-proxy-image load-image load-security-proxy-image  ## Install the kuberay api server with security to the K8s cluster specified in ~/.kube/config.
@@ -234,7 +260,7 @@ MOCKGEN = $(REPO_ROOT_BIN)/mockgen
 KUSTOMIZE_VERSION ?= v5.4.3
 GOFUMPT_VERSION ?= v0.3.1
 GOIMPORTS_VERSION ?= v0.14.0
-GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_VERSION ?= v2.7.2
 KIND_VERSION ?= v0.19.0
 GOBINDATA_VERSION ?= v4.0.2
 MOCKGEN_VERSION ?= v1.6.0
