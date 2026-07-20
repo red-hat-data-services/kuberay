@@ -1,6 +1,7 @@
-FROM golang:1.24
+FROM golang:1.25
 
 ENV KUBECONFIG=/kuberay/tests/.kube/config
+ENV GOFLAGS=-mod=mod
 
 # Set the working directory inside the container
 WORKDIR /kuberay/tests
@@ -18,6 +19,9 @@ RUN go mod download && \
     go install gotest.tools/gotestsum@latest
 
 COPY ray-operator .
+
+# Local vendor/ (gitignored, often stale) must not override go mod download above.
+RUN rm -rf vendor
 
 COPY ray-operator/images/tests/.env-odh .env-odh
 

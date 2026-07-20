@@ -2,13 +2,13 @@
 
 import { useSnackBar } from "@/components/SnackBarProvider";
 import { useHostURL } from "@/hooks/useHostURL";
-import { Job } from "@/types/rayjob";
 import Link from "@mui/joy/Link";
 import React from "react";
 import { useNamespace } from "./NamespaceProvider";
+import { JobRow } from "@/types/table";
 
 interface ResourceQuotaAlertProps {
-  jobs: Job[];
+  jobs: JobRow[];
 }
 
 // This component monitors the current list of jobs for resource quota errors
@@ -27,20 +27,18 @@ export const ResourceQuotaAlert: React.FC<ResourceQuotaAlertProps> = ({
   React.useEffect(() => {
     if (!showedAlert) {
       const resourceQuotaExceeded = jobs.some((job) =>
-        job.message?.includes("exceeded quota")
+        job.message?.includes("exceeded quota"),
       );
       if (resourceQuotaExceeded) {
         setShowedAlert(true);
         // Show alert
         snackBar.showSnackBar(
           "Resource quota exceeded",
-          <>
-            Your job is pending due to a resource quota error.
-          </>,
-          "danger"
+          <>Your job is pending due to a resource quota error.</>,
+          "danger",
         );
       }
     }
-  }, [jobs]);
+  }, [jobs, showedAlert, snackBar]);
   return null;
 };
