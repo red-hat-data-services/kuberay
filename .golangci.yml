@@ -3,6 +3,7 @@ linters:
   default: none
   enable:
     - asciicheck
+    - depguard
     - errcheck
     - ginkgolinter
     - gosec
@@ -24,6 +25,17 @@ linters:
     - noctx
     - revive
   settings:
+    depguard:
+      rules:
+        crd-types-boundary:
+          list-mode: lax
+          files:
+            - "**/ray-operator/apis/ray/**"
+          deny:
+            - pkg: "github.com/ray-project/kuberay/ray-operator/controllers"
+              desc: "CRD types (apis/ray/) must not import controllers/ — types must remain dependency-free"
+            - pkg: "github.com/ray-project/kuberay/ray-operator/pkg/webhooks"
+              desc: "CRD types (apis/ray/) must not import pkg/webhooks/"
     staticcheck:
       checks: ["all", "-SA1019", "-ST1001", "-ST1003", "-ST1005", "-QF1008"]
     ginkgolinter:
