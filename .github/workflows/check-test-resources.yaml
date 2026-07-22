@@ -1,0 +1,79 @@
+# Fail if CI resource scenarios are already committed into test sources.
+# update-resources must produce a non-empty diff; a clean tree means the
+# scenario targets were baked into git (sync risk) instead of applied at runtime.
+name: check-test-resources
+
+on:
+  push:
+    branches:
+      - dev
+      - release-*
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - '**'
+
+jobs:
+  update-resources-must-modify-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: v1.25
+          cache-dependency-path: scripts/go.mod
+
+      - name: build-image scenario must modify sources
+        run: |
+          set -euo pipefail
+          SUPPORT_GO="${GITHUB_WORKSPACE}/ray-operator/test/support/support.go"
+          LIGHTWEIGHT_GO="${GITHUB_WORKSPACE}/ray-operator/test/e2erayjob/rayjob_lightweight_test.go"
+
+          go run ./update-resources.go -scenario build-image "${SUPPORT_GO}"
+          go run ./update-resources.go -scenario build-image "${LIGHTWEIGHT_GO}"
+
+          if git -C "${GITHUB_WORKSPACE}" diff --quiet -- \
+            ray-operator/test/support/support.go \
+            ray-operator/test/e2erayjob/rayjob_lightweight_test.go; then
+            echo "::error::update-resources -scenario build-image made no changes."
+            echo "Test sources already match the build-image scenario; revert committed resource bumps"
+            echo "and rely on CI to apply update-resources at runtime."
+            exit 1
+          fi
+
+          echo "OK: build-image scenario modified:"
+          git -C "${GITHUB_WORKSPACE}" --no-pager diff --stat -- \
+            ray-operator/test/support/support.go \
+            ray-operator/test/e2erayjob/rayjob_lightweight_test.go
+          git -C "${GITHUB_WORKSPACE}" checkout -- \
+            ray-operator/test/support/support.go \
+            ray-operator/test/e2erayjob/rayjob_lightweight_test.go
+
+      - name: pr scenario must modify sources
+        run: |
+          set -euo pipefail
+          SUPPORT_GO="${GITHUB_WORKSPACE}/ray-operator/test/support/support.go"
+
+          go run ./update-resources.go -scenario pr "${SUPPORT_GO}"
+
+          if git -C "${GITHUB_WORKSPACE}" diff --quiet -- \
+            ray-operator/test/support/support.go; then
+            echo "::error::update-resources -scenario pr made no changes."
+            echo "Test sources already match the pr scenario; revert committed resource bumps"
+            echo "and rely on CI to apply update-resources at runtime."
+            exit 1
+          fi
+
+          echo "OK: pr scenario modified:"
+          git -C "${GITHUB_WORKSPACE}" --no-pager diff --stat -- \
+            ray-operator/test/support/support.go
+          git -C "${GITHUB_WORKSPACE}" checkout -- \
+            ray-operator/test/support/support.go
