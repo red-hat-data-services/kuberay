@@ -1,18 +1,17 @@
-# This workflow will compile e2e tests and release them
+# Create a GitHub release for an ODH KubeRay version tag.
 
 name: ODH Release
 on:
+  # workflow_dispatch only: gh release create publishes a tag, and a push:tags
+  # trigger would re-enter this workflow and fail "Release already exists".
   workflow_dispatch:
     inputs:
       version:
         description: 'Tag to be used for release, i.e.: v0.0.1'
         required: true
-  push:
-    tags:
-      - '*'
 
 env:
-  KUBERAY_RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  KUBERAY_RELEASE_VERSION: ${{ github.event.inputs.version }}
 
 jobs:
   release-odh:
@@ -24,12 +23,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Set Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: v1.22
-        cache-dependency-path: "ray-operator/go.sum"
 
     - name: Verify that release doesn't exist yet
       shell: bash {0}
@@ -43,14 +36,9 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.TOKEN }}
 
-    - name: Compile tests
-      run: |
-        go test -c -o compiled-tests/e2e ./test/e2e/
-      working-directory: ray-operator
-
     - name: Creates a release in GitHub
       run: |
-        gh release create $KUBERAY_RELEASE_VERSION --target $GITHUB_SHA ray-operator/compiled-tests/*
+        gh release create $KUBERAY_RELEASE_VERSION --target $GITHUB_SHA
       env:
         GITHUB_TOKEN: ${{ secrets.CODEFLARE_MACHINE_ACCOUNT_TOKEN }}
       shell: bash
