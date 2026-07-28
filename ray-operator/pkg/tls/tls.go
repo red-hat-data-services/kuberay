@@ -12,9 +12,15 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 var log = ctrl.Log.WithName("tls")
@@ -51,7 +57,9 @@ var tlsVersionMap = map[configv1.TLSProtocolVersion]uint16{
 
 // Result holds the resolved TLS configuration.
 type Result struct {
-	TLSOpts []func(*tls.Config)
+	TLSOpts        []func(*tls.Config)
+	Profile        *configv1.TLSSecurityProfile
+	ProfileFetched bool
 }
 
 // Resolve reads the cluster TLS profile from apiservers.config.openshift.io/cluster
@@ -60,20 +68,24 @@ type Result struct {
 // it returns hardened Intermediate defaults.
 // Returns an error only on unexpected failures that should prevent startup.
 func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
-	var result Result
-
-	resolveCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
 	scheme := runtime.NewScheme()
 	if err := configv1.Install(scheme); err != nil {
-		return result, fmt.Errorf("installing OpenShift config scheme: %w", err)
+		return Result{}, fmt.Errorf("installing OpenShift config scheme: %w", err)
 	}
 
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		return result, fmt.Errorf("creating bootstrap client for TLS profile: %w", err)
+		return Result{}, fmt.Errorf("creating bootstrap client for TLS profile: %w", err)
 	}
+
+	return resolveWithClient(ctx, k8sClient)
+}
+
+func resolveWithClient(ctx context.Context, k8sClient client.Client) (Result, error) {
+	var result Result
+
+	resolveCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	apiServer := &configv1.APIServer{}
 	if err := k8sClient.Get(resolveCtx, client.ObjectKey{Name: "cluster"}, apiServer); err != nil {
@@ -88,6 +100,8 @@ func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
 			apierrors.IsTooManyRequests(err),
 			errors.Is(err, context.DeadlineExceeded):
 			log.Info("Transient API error reading TLS profile, using hardened defaults", "error", err)
+			result.ProfileFetched = true
+			result.Profile = &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType}
 		default:
 			return result, fmt.Errorf("reading APIServer TLS profile: %w", err)
 		}
@@ -95,6 +109,8 @@ func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
 		return result, nil
 	}
 
+	result.ProfileFetched = true
+	result.Profile = apiServer.Spec.TLSSecurityProfile
 	minVersion, ciphers := parseProfile(apiServer.Spec.TLSSecurityProfile)
 	if ciphers != nil && len(ciphers) == 0 {
 		return result, fmt.Errorf("custom TLS profile specified ciphers but none are supported by Go")
@@ -165,3 +181,107 @@ func parseCustomProfile(custom *configv1.CustomTLSProfile) (uint16, []uint16) {
 	}
 	return minVersion, ciphers
 }
+
+// SetupWatcher registers a controller that watches the APIServer resource
+// and triggers a graceful restart when the TLS profile changes.
+// On non-OpenShift clusters (ProfileFetched == false), this is a no-op.
+func SetupWatcher(mgr manager.Manager, result Result, cancel context.CancelFunc) error {
+	if !result.ProfileFetched {
+		return nil
+	}
+
+	c, err := controller.New("tls-profile-watcher", mgr, controller.Options{
+		NeedLeaderElection: boolPtr(false),
+		Reconciler: &profileWatcher{
+			client:         mgr.GetClient(),
+			cancel:         cancel,
+			initialProfile: result.Profile,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating TLS profile watcher controller: %w", err)
+	}
+
+	if err := c.Watch(source.Kind(
+		mgr.GetCache(),
+		&configv1.APIServer{},
+		handler.TypedEnqueueRequestsFromMapFunc(
+			func(_ context.Context, obj *configv1.APIServer) []reconcile.Request {
+				if obj.Name == "cluster" {
+					return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: "cluster"}}}
+				}
+				return nil
+			},
+		),
+	)); err != nil {
+		return fmt.Errorf("watching APIServer resource: %w", err)
+	}
+
+	log.Info("TLS profile watcher registered")
+	return nil
+}
+
+type profileWatcher struct {
+	client         client.Client
+	cancel         context.CancelFunc
+	initialProfile *configv1.TLSSecurityProfile
+}
+
+func (w *profileWatcher) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
+	apiServer := &configv1.APIServer{}
+	if err := w.client.Get(ctx, client.ObjectKey{Name: "cluster"}, apiServer); err != nil {
+		log.Info("TLS profile watcher: unable to read APIServer, will retry", "error", err)
+		return reconcile.Result{}, err
+	}
+
+	current := apiServer.Spec.TLSSecurityProfile
+	if !profileEqual(w.initialProfile, current) {
+		log.Info("TLS profile changed, initiating shutdown to reload")
+		w.cancel()
+	}
+	return reconcile.Result{}, nil
+}
+
+func normalizeProfileType(t configv1.TLSProfileType) configv1.TLSProfileType {
+	if t == "" {
+		return configv1.TLSProfileIntermediateType
+	}
+	return t
+}
+
+func normalizeProfile(p *configv1.TLSSecurityProfile) *configv1.TLSSecurityProfile {
+	if p == nil {
+		return &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType}
+	}
+	return p
+}
+
+func profileEqual(a, b *configv1.TLSSecurityProfile) bool {
+	a = normalizeProfile(a)
+	b = normalizeProfile(b)
+	if normalizeProfileType(a.Type) != normalizeProfileType(b.Type) {
+		return false
+	}
+	if normalizeProfileType(a.Type) == configv1.TLSProfileCustomType {
+		if a.Custom == nil && b.Custom == nil {
+			return true
+		}
+		if a.Custom == nil || b.Custom == nil {
+			return false
+		}
+		if a.Custom.MinTLSVersion != b.Custom.MinTLSVersion {
+			return false
+		}
+		if len(a.Custom.Ciphers) != len(b.Custom.Ciphers) {
+			return false
+		}
+		for i := range a.Custom.Ciphers {
+			if a.Custom.Ciphers[i] != b.Custom.Ciphers[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func boolPtr(b bool) *bool { return &b }
