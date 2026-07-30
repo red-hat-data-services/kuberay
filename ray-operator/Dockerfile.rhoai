@@ -1,5 +1,5 @@
 # Build the manager binary - we don't have a registry ubi9 toolset for go1.24 yet
-FROM registry.redhat.io/ubi9/go-toolset@sha256:5e231f8c5eab7812a1e2c701ce48c63eb3bb02dc9f372d8fbb59e3e1cd9c493c AS builder
+FROM registry.redhat.io/ubi9/go-toolset@sha256:272a3dd990bba320c2e246119a0019d10d627d0104938d5db77ba5ab3ae3a51d AS builder
 
 
 WORKDIR /workspace
