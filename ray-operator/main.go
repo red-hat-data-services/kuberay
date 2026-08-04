@@ -9,6 +9,7 @@ import (
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/go-logr/zapr"
+	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	k8szap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -53,6 +55,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(rayv1.AddToScheme(scheme))
+	utilruntime.Must(configv1.Install(scheme))
 	utilruntime.Must(routev1.Install(scheme))
 	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
@@ -64,6 +67,10 @@ func init() {
 
 func main() {
 	var metricsAddr string
+	var secureMetrics bool
+	var metricsCertPath string
+	var metricsCertName string
+	var metricsCertKey string
 	var enableLeaderElection bool
 	var leaderElectionNamespace string
 	var probeAddr string
@@ -84,6 +91,10 @@ func main() {
 
 	// TODO: remove flag-based config once Configuration API graduates to v1.
 	flag.StringVar(&metricsAddr, "metrics-addr", configapi.DefaultMetricsAddr, "The address the metric endpoint binds to.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", true, "Serve metrics via HTTPS")
+	flag.StringVar(&metricsCertPath, "metrics-cert-path", "", "Directory with TLS cert/key for metrics. Empty uses self-signed.")
+	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "Cert filename in metrics-cert-path")
+	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "Key filename in metrics-cert-path")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", configapi.DefaultProbeAddr, "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", configapi.DefaultEnableLeaderElection,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -254,6 +265,15 @@ func main() {
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = tlsResult.TLSOpts
+	options.Metrics.SecureServing = secureMetrics
+	if secureMetrics {
+		options.Metrics.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+	if metricsCertPath != "" {
+		options.Metrics.CertDir = metricsCertPath
+		options.Metrics.CertName = metricsCertName
+		options.Metrics.KeyName = metricsCertKey
+	}
 	options.WebhookServer = webhook.NewServer(webhook.Options{
 		TLSOpts: tlsResult.TLSOpts,
 	})
@@ -261,7 +281,13 @@ func main() {
 	mgr, err := ctrl.NewManager(restConfig, options)
 	exitOnError(err, "unable to start manager")
 
-	ctx := ctrl.SetupSignalHandler()
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+
+	if err := pkgtls.SetupWatcher(mgr, tlsResult, cancel); err != nil {
+		cancel()
+		setupLog.Error(err, "unable to set up TLS profile watcher")
+		os.Exit(1)
+	}
 
 	var rayClusterMetricsManager *metrics.RayClusterMetricsManager
 	var rayJobMetricsManager *metrics.RayJobMetricsManager
@@ -336,7 +362,11 @@ func main() {
 	exitOnError(mgr.AddReadyzCheck("readyz", healthz.Ping), "unable to set up ready check")
 
 	setupLog.Info("starting manager")
-	exitOnError(mgr.Start(ctx), "problem running manager")
+	if err := mgr.Start(ctx); err != nil {
+		cancel()
+		exitOnError(err, "problem running manager")
+	}
+	cancel()
 }
 
 func cacheSelectors() (map[client.Object]cache.ByObject, error) {
