@@ -1,7 +1,7 @@
 # Build arguments
 ARG SOURCE_CODE=.
 
-FROM registry.access.redhat.com/ubi9/go-toolset@sha256:5d26ff5606bd6590930e7cfc202b510e3fe2c7a7a1720860f444ab49c45128cb AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset@sha256:0b471eb04868f3d9d90bf3c668f9c6c7a22cef07474ac9fec067909dfd7dec7c AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -29,7 +29,7 @@ USER root
 
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} GOEXPERIMENT=strictfipsruntime go build -tags strictfipsruntime -a -o manager main.go
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:57c8151c51445a07e503dab9dc9211dc3cdeac9d45ed81a10954b7d770659b3b
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:7c372902c8d211db2d25c8277ba534a73b92742a334874dced829a63b0f21221
 
 WORKDIR /
 COPY --from=builder /workspace/manager .
