@@ -3,10 +3,10 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"os/exec"
-	"regexp"
-	"strings"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -84,23 +84,27 @@ func getAndCheckRayJob(
 // to ensure this helper remains correct if future samples define multiple groups.
 func getWorkerGroupValues(ns, cluster, group string) (minReplicas, maxReplicas, replicas string) {
 	GinkgoHelper()
-	clean := func(s string) string {
-		return regexp.MustCompile(`[^0-9]`).ReplaceAllString(strings.TrimSpace(s), "")
+	cmd := exec.CommandContext(context.Background(), "kubectl", "get", "raycluster", cluster, "-n", ns, "-o", "json")
+	output, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred())
+
+	var rayCluster rayv1.RayCluster
+	err = json.Unmarshal(output, &rayCluster)
+	Expect(err).ToNot(HaveOccurred())
+
+	for _, wg := range rayCluster.Spec.WorkerGroupSpecs {
+		if wg.GroupName != group {
+			continue
+		}
+		return int32PtrToString(wg.MinReplicas), int32PtrToString(wg.MaxReplicas), int32PtrToString(wg.Replicas)
 	}
+	Fail(fmt.Sprintf("worker group %q not found in raycluster %q", group, cluster))
+	return "", "", ""
+}
 
-	//nolint:gosec // G204: group parameter is controlled by test code, not user input
-	minOut, err := exec.CommandContext(context.Background(), "kubectl", "get", "raycluster", cluster, "-n", ns,
-		"-o", "jsonpath={.spec.workerGroupSpecs[?(@.groupName==\""+group+"\")].minReplicas}").Output()
-	Expect(err).ToNot(HaveOccurred())
-
-	//nolint:gosec // G204: group parameter is controlled by test code, not user input
-	maxOut, err := exec.CommandContext(context.Background(), "kubectl", "get", "raycluster", cluster, "-n", ns,
-		"-o", "jsonpath={.spec.workerGroupSpecs[?(@.groupName==\""+group+"\")].maxReplicas}").Output()
-	Expect(err).ToNot(HaveOccurred())
-
-	//nolint:gosec // G204: group parameter is controlled by test code, not user input
-	replicasOut, err := exec.CommandContext(context.Background(), "kubectl", "get", "raycluster", cluster, "-n", ns,
-		"-o", "jsonpath={.spec.workerGroupSpecs[?(@.groupName==\""+group+"\")].replicas}").Output()
-	Expect(err).ToNot(HaveOccurred())
-	return clean(string(minOut)), clean(string(maxOut)), clean(string(replicasOut))
+func int32PtrToString(v *int32) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatInt(int64(*v), 10)
 }
