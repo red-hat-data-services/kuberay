@@ -38,7 +38,7 @@ resources:
 - ray_operator_scc.yaml
 - ../default
 - webhook.yaml
-- ../overlays/odh/rbac/tls
+- rbac/tls
 
 commonLabels:
   app.kubernetes.io/name: kuberay
