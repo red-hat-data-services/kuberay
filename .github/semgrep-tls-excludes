@@ -1,0 +1,4 @@
+# Format: rule-id:path/to/file.go
+# Localhost gRPC: in-process grpc-gateway / experimental reverse proxy, plaintext by design.
+go-grpc-tls-credential-override:apiserver/cmd/main.go
+go-grpc-tls-credential-override:experimental/cmd/main.go
