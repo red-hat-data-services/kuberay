@@ -1,0 +1,8 @@
+# Repo-local exceptions for tls-config-lint (CI: .github/workflows/tls-lint.yml).
+# File-scoped so the patterns still run everywhere else.
+exceptions:
+  # OpenShift profile resolver enumerates all TLSSecurityProfile types, including Old/Custom.
+  - tls-profile-old:ray-operator/pkg/tls/tls.go
+  - tls-profile-custom:ray-operator/pkg/tls/tls.go
+  # Codegen helper; only active when DISABLE_SSL_CERT_VALIDATION is set.
+  - create-unverified-context:scripts/openapi2jsonschema.py
