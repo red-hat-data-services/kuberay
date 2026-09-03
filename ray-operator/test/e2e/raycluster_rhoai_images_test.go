@@ -19,6 +19,7 @@ import (
 
 const (
 	rhoaiRegistryPrefix        = "registry.redhat.io/"
+	odhCatalogPrefix           = "quay.io/opendatahub/"
 	rhoaiImageDigestPattern    = `@sha256:[a-f0-9]{64}$`
 	rhodsOperatorCSVNamePrefix = "rhods-operator"
 	rhodsOperatorNamespace     = "redhat-ods-operator"
@@ -35,12 +36,17 @@ func TestRayClusterRHOAIImages(t *testing.T) {
 		t.Skip("no rhods-operator CSV found; skipping RHOAI image validation (standalone / PR ITS)")
 	}
 
+	requireRhoaiRegistry := !strings.HasPrefix(operatorCatalogImage(test), odhCatalogPrefix)
+	if !requireRhoaiRegistry {
+		LogWithTimestamp(t, "ODH catalog detected; skipping %s registry check", rhoaiRegistryPrefix)
+	}
+
 	operator := kuberayOperatorDeployment(test, g)
 	operatorImage := operator.Spec.Template.Spec.Containers[0].Image
 	sidecarPin := envValue(operator.Spec.Template.Spec.Containers[0].Env, kubeRBACProxyEnvVar)
 	g.Expect(sidecarPin).NotTo(BeEmpty(), "%s must be set on %s", kubeRBACProxyEnvVar, kuberayOperatorDeployName)
 
-	assertRHOAIImage(g, "kuberay-operator", operatorImage, relatedImages)
+	assertRHOAIImage(g, "kuberay-operator", operatorImage, relatedImages, requireRhoaiRegistry)
 
 	namespace := test.NewTestNamespace()
 	rayClusterAC := rayv1ac.RayCluster("raycluster-image-validation", namespace.Name).
@@ -65,14 +71,53 @@ func TestRayClusterRHOAIImages(t *testing.T) {
 	sidecar := sidecarImage(headPod, oidcProxySidecarName)
 	g.Expect(sidecar).To(Equal(sidecarPin),
 		"injected %s sidecar should use %s from the operator Deployment", oidcProxySidecarName, kubeRBACProxyEnvVar)
-	assertRHOAIImage(g, oidcProxySidecarName+" sidecar", sidecar, relatedImages)
+	assertRHOAIImage(g, oidcProxySidecarName+" sidecar", sidecar, relatedImages, requireRhoaiRegistry)
 }
 
-func assertRHOAIImage(g Gomega, name, image string, relatedImages map[string]struct{}) {
-	g.Expect(image).To(HavePrefix(rhoaiRegistryPrefix), "%s image %s must be hosted on %s", name, image, rhoaiRegistryPrefix)
+func assertRHOAIImage(g Gomega, name, image string, relatedImages map[string]struct{}, requireRhoaiRegistry bool) {
+	if requireRhoaiRegistry {
+		g.Expect(image).To(HavePrefix(rhoaiRegistryPrefix), "%s image %s must be hosted on %s", name, image, rhoaiRegistryPrefix)
+	}
 	g.Expect(image).To(MatchRegexp(rhoaiImageDigestPattern), "%s image %s must use a sha256 digest, not a tag", name, image)
 	_, ok := relatedImages[image]
 	g.Expect(ok).To(BeTrue(), "%s image %s is not listed in the rhods-operator CSV relatedImages", name, image)
+}
+
+func operatorCatalogImage(test Test) string {
+	test.T().Helper()
+	subGVR := schema.GroupVersionResource{
+		Group:    "operators.coreos.com",
+		Version:  "v1alpha1",
+		Resource: "subscriptions",
+	}
+	subs, err := test.Client().Dynamic().Resource(subGVR).Namespace(rhodsOperatorNamespace).List(test.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+	csGVR := schema.GroupVersionResource{
+		Group:    "operators.coreos.com",
+		Version:  "v1alpha1",
+		Resource: "catalogsources",
+	}
+	for i := range subs.Items {
+		sub := &subs.Items[i]
+		pkg, _, _ := unstructured.NestedString(sub.Object, "spec", "name")
+		if pkg != rhodsOperatorCSVNamePrefix {
+			continue
+		}
+		source, _, _ := unstructured.NestedString(sub.Object, "spec", "source")
+		sourceNS, _, _ := unstructured.NestedString(sub.Object, "spec", "sourceNamespace")
+		if source == "" || sourceNS == "" {
+			continue
+		}
+		cs, err := test.Client().Dynamic().Resource(csGVR).Namespace(sourceNS).Get(test.Ctx(), source, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		image, _, _ := unstructured.NestedString(cs.Object, "spec", "image")
+		return image
+	}
+	return ""
 }
 
 func rhoaiRelatedImages(test Test) map[string]struct{} {
