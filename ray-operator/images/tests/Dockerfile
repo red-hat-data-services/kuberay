@@ -1,4 +1,4 @@
-FROM golang:1.24
+FROM golang:1.25.13
 
 ENV KUBECONFIG=/kuberay/tests/.kube/config
 

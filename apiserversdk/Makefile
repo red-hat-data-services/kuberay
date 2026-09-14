@@ -6,6 +6,7 @@ $(LOCALBIN):
 REPO_ROOT := $(shell dirname ${PWD})
 REPO_ROOT_BIN := $(REPO_ROOT)/bin
 GOLANGCI_LINT ?= $(REPO_ROOT_BIN)/golangci-lint
+GOLANGCI_LINT_VERSION ?= v1.64.8
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # This is a requirement for 'setup-envtest.sh' in the test target.
@@ -21,7 +22,7 @@ vet: ## Run go vet against code.
 
 .PHONY: golangci-lint
 golangci-lint: ## Download golangci_lint locally if necessary.
-	test -s $(GOLANGCI_LINT) || (curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | bash -s -- -b $(REPO_ROOT_BIN)/ $(GOLANGCI_LINT_VERSION))
+	test -s $(GOLANGCI_LINT) || GOBIN=$(REPO_ROOT_BIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 .PHONY: lint
 lint: golangci-lint fmt vet ## Run the linter.
