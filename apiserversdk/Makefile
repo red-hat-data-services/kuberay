@@ -24,8 +24,6 @@ vet: ## Run go vet against code.
 golangci-lint: ## Download golangci_lint locally if necessary.
 	test -s $(GOLANGCI_LINT) || GOBIN=$(REPO_ROOT_BIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-# Exclude the SA1019 check which checks the usage of deprecated fields
-# via the linters.settings.staticcheck.checks configuration in .golangci.yaml.
 .PHONY: lint
 lint: golangci-lint fmt vet ## Run the linter.
 	test -s $(GOLANGCI_LINT) || ($(GOLANGCI_LINT) run --timeout=3m --allow-parallel-runners)
@@ -45,7 +43,7 @@ test: envtest ## Run tests.
 ENVTEST = $(LOCALBIN)/setup-envtest
 $(ENVTEST): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest locally if necessary.
-	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.23
+	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24
 
 .PHONY: clean
 clean:

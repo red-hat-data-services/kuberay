@@ -732,6 +732,31 @@ spec:
                             type: object
                         type: object
                     type: object
+                  ingressOptions:
+                    properties:
+                      host:
+                        type: string
+                      path:
+                        type: string
+                      pathType:
+                        enum:
+                        - Exact
+                        - Prefix
+                        - ImplementationSpecific
+                        type: string
+                      tls:
+                        items:
+                          properties:
+                            hosts:
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            secretName:
+                              type: string
+                          type: object
+                        type: array
+                    type: object
                   labels:
                     additionalProperties:
                       type: string
@@ -9336,6 +9361,9 @@ spec:
       name: head service IP
       priority: 1
       type: string
+    deprecated: true
+    deprecationWarning: ray.io/v1alpha1 RayCluster is deprecated; use ray.io/v1 RayCluster.
+      v1alpha1 receives no new fields and will be unavailable in KubeRay 1.9.
     name: v1alpha1
     schema:
       openAPIV3Schema:

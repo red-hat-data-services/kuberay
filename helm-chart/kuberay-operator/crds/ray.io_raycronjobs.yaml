@@ -20,6 +20,9 @@ spec:
     - jsonPath: .spec.schedule
       name: schedule
       type: string
+    - jsonPath: .spec.timeZone
+      name: timezone
+      type: string
     - jsonPath: .status.lastScheduleTime
       name: last schedule
       type: date
@@ -822,6 +825,31 @@ spec:
                                         x-kubernetes-list-type: atomic
                                     type: object
                                 type: object
+                            type: object
+                          ingressOptions:
+                            properties:
+                              host:
+                                type: string
+                              path:
+                                type: string
+                              pathType:
+                                enum:
+                                - Exact
+                                - Prefix
+                                - ImplementationSpecific
+                                type: string
+                              tls:
+                                items:
+                                  properties:
+                                    hosts:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    secretName:
+                                      type: string
+                                  type: object
+                                type: array
                             type: object
                           labels:
                             additionalProperties:
@@ -13118,6 +13146,9 @@ spec:
                 type: string
               suspend:
                 type: boolean
+              timeZone:
+                minLength: 1
+                type: string
             required:
             - jobTemplate
             - schedule

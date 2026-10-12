@@ -223,6 +223,21 @@ const (
 	OWNER_KIND                                                                   = "OWNER_KIND"
 	OWNER_NAME                                                                   = "OWNER_NAME"
 	EVENTS_PORT                                                                  = "EVENTS_PORT"
+	STORAGE_ROOT_DIR                                                             = "STORAGE_ROOT_DIR"
+	LOG_BATCHING                                                                 = "LOG_BATCHING"
+	PUSH_INTERVAL                                                                = "PUSH_INTERVAL"
+	STORAGE_BACKEND                                                              = "STORAGE_BACKEND"
+	GCS_BUCKET                                                                   = "GCS_BUCKET"
+	S3_BUCKET                                                                    = "S3_BUCKET"
+	S3_ENDPOINT                                                                  = "S3_ENDPOINT"
+	S3_REGION                                                                    = "S3_REGION"
+	AZURE_STORAGE_CONTAINER                                                      = "AZURE_STORAGE_CONTAINER"
+	AZURE_STORAGE_CONNECTION_STRING                                              = "AZURE_STORAGE_CONNECTION_STRING"
+	AZURE_STORAGE_ACCOUNT_URL                                                    = "AZURE_STORAGE_ACCOUNT_URL"
+	AZURE_STORAGE_AUTH_MODE                                                      = "AZURE_STORAGE_AUTH_MODE"
+	ALIYUN_BUCKET                                                                = "OSS_BUCKET"
+	ALIYUN_ENDPOINT                                                              = "OSS_ENDPOINT"
+	ALIYUN_REGION                                                                = "OSS_REGION"
 	RAY_ENABLE_RAY_EVENT                                                         = "RAY_enable_ray_event"
 	RAY_ENABLE_CORE_WORKER_RAY_EVENT_TO_AGGREGATOR                               = "RAY_enable_core_worker_ray_event_to_aggregator"
 	RAY_DASHBOARD_AGGREGATOR_AGENT_EVENTS_EXPORT_ADDR                            = "RAY_DASHBOARD_AGGREGATOR_AGENT_EVENTS_EXPORT_ADDR"
@@ -272,6 +287,11 @@ const (
 	RAYJOB_DEPLOYMENT_STATUS_TRANSITION_GRACE_PERIOD_SECONDS         = "RAYJOB_DEPLOYMENT_STATUS_TRANSITION_GRACE_PERIOD_SECONDS"
 	DEFAULT_RAYJOB_DEPLOYMENT_STATUS_TRANSITION_GRACE_PERIOD_SECONDS = 300
 
+	// If job status checks keep failing for longer than
+	/// RAYJOB_STATUS_CHECK_TIMEOUT_SECONDS, KubeRay will transition the RayJob's JobDeploymentStatus to Failed.
+	RAYJOB_STATUS_CHECK_TIMEOUT_SECONDS         = "RAYJOB_STATUS_CHECK_TIMEOUT_SECONDS"
+	DEFAULT_RAYJOB_STATUS_CHECK_TIMEOUT_SECONDS = 300
+
 	// This environment variable for the KubeRay operator determines whether to enable
 	// a login shell by passing the -l option to the container command /bin/bash.
 	// The -l flag was added by default before KubeRay v1.4.0, but it is no longer added
@@ -314,16 +334,35 @@ const (
 	// only one of them needs to be checked. So, RayAgentRayletHealthPath accesses the dashboard agent's API endpoint
 	// to check the health of the Raylet process.
 	// TODO (kevin85421): Should we take the dashboard process into account?
-	RayAgentRayletHealthPath  = "api/local_raylet_healthz"
-	RayDashboardGCSHealthPath = "api/gcs_healthz"
-	RayServeProxyHealthPath   = "-/healthz"
+	RayAgentRayletHealthPath                 = "api/local_raylet_healthz"
+	RayDashboardGCSHealthPath                = "api/gcs_healthz"
+	RayDashboardGCSHealthCheckTimeoutSeconds = 10
+	RayServeProxyHealthPath                  = "-/healthz"
 	// BaseWgetHealthCommand checks a single health URL; args: timeout_sec, port, path (no leading slash).
 	// This is used for Ray versions that rely on exec probes and assume common CLI tools exist in the image.
 	BaseWgetHealthCommand = "wget --tries 1 -T %d -q -O- http://localhost:%d/%s | grep success"
-	// BasePythonHealthCommand checks a single health URL; args: port, path (no leading slash), timeout_sec.
+	// BasePythonHealthCommand checks a single health URL; args: url, timeout_sec.
 	// This is used when wget is not available (e.g. slim Ray images).
-	BasePythonHealthCommand = `python -c "import urllib.request; r=urllib.request.urlopen('http://localhost:%d/%s', timeout=%d); exit(0 if b'success' in r.read() else 1)"`
-	RayNodeHealthPath       = "/api/healthz"
+	BasePythonHealthCommand = `python -c "import urllib.request; r=urllib.request.urlopen('%s', timeout=%d); exit(0 if b'success' in r.read() else 1)"`
+	// K8sJobDashboardHealthCommand checks dashboard health using submitter environment overrides.
+	// Args: health path (no leading slash), timeout_sec, generated fallback Service URL.
+	// Prefers RAY_API_SERVER_ADDRESS over RAY_ADDRESS, then the fallback address, following Ray's get_address_for_submission_client:
+	// https://github.com/ray-project/ray/blob/9634fa77aab2ece9759b380d20d315d4e27c912b/python/ray/dashboard/utils.py#L726-L734
+	K8sJobDashboardHealthCommand = `python -c '
+import os
+import sys
+import urllib.request
+
+address = (
+    os.environ.get("RAY_API_SERVER_ADDRESS")
+    or os.environ.get("RAY_ADDRESS")
+    or sys.argv[1]
+)
+health_url = address.rstrip("/") + "/%s"
+with urllib.request.urlopen(health_url, timeout=%d) as response:
+    sys.exit(0 if b"success" in response.read() else 1)
+' '%s'`
+	RayNodeHealthPath = "/api/healthz"
 
 	// Finalizers for RayJob
 	RayJobStopJobFinalizer = "ray.io/rayjob-finalizer"
@@ -344,7 +383,7 @@ const (
 	// The version is included in the RAY_USAGE_STATS_EXTRA_TAGS environment variable
 	// as well as the user-agent. This constant is updated before release.
 	// TODO: Update KUBERAY_VERSION to be a build-time variable.
-	KUBERAY_VERSION = "nightly"
+	KUBERAY_VERSION = "v1.7.1"
 
 	// KubeRayController represents the value of the default job controller
 	KubeRayController = "ray.io/kuberay-operator"
@@ -361,6 +400,11 @@ const (
 	// MaxRayJobNameLength is the maximum RayJob name to make sure it pass the RayCluster validation
 	// Minus 6 since we append 6 characters to the RayJob name to create the cluster (GenerateRayClusterName).
 	MaxRayJobNameLength = MaxRayClusterNameLength - 6
+
+	// MaxRayCronJobNameLength is the maximum RayCronJob name to make sure its child RayJob passes
+	// validation. Minus 11 for the "-<minuteHash>" suffix (dash + up to a 10-digit Unix-minute hash)
+	// appended to create the child RayJob name (getRayJobName).
+	MaxRayCronJobNameLength = MaxRayJobNameLength - 11
 )
 
 type ServiceType string
@@ -394,7 +438,8 @@ var (
 )
 
 func RayClusterReplicaFailureReason(err error) string {
-	if failure, ok := errors.AsType[*errRayClusterReplicaFailure](err); ok {
+	var failure *errRayClusterReplicaFailure
+	if errors.As(err, &failure) {
 		return failure.reason
 	}
 	return ""
@@ -456,6 +501,7 @@ const (
 	InvalidRayServiceSpec           K8sEventType = "InvalidRayServiceSpec"
 	InvalidRayServiceMetadata       K8sEventType = "InvalidRayServiceMetadata"
 	RayServiceInitializingTimeout   K8sEventType = "RayServiceInitializingTimeout"
+	RollbackImpossible              K8sEventType = "RollbackImpossible"
 	UpdatedHeadPodServeLabel        K8sEventType = "UpdatedHeadPodServeLabel"
 	UpdatedGateway                  K8sEventType = "UpdatedGateway"
 	UpdatedHTTPRoute                K8sEventType = "UpdatedHTTPRoute"
@@ -466,8 +512,14 @@ const (
 	FailedToUpdateTargetCapacity    K8sEventType = "FailedToUpdateTargetCapacity"
 	FailedToCreateGateway           K8sEventType = "FailedToCreateGateway"
 	FailedToUpdateGateway           K8sEventType = "FailedToUpdateGateway"
+	FailedToDeleteGateway           K8sEventType = "FailedToDeleteGateway"
 	FailedToCreateHTTPRoute         K8sEventType = "FailedToCreateHTTPRoute"
 	FailedToUpdateHTTPRoute         K8sEventType = "FailedToUpdateHTTPRoute"
+	FailedToDeleteHTTPRoute         K8sEventType = "FailedToDeleteHTTPRoute"
+	FailedToDeleteService           K8sEventType = "FailedToDeleteService"
+	DeletedGateway                  K8sEventType = "DeletedGateway"
+	DeletedHTTPRoute                K8sEventType = "DeletedHTTPRoute"
+	DeletedService                  K8sEventType = "DeletedService"
 
 	// Generic Pod event list
 	DeletedPod                  K8sEventType = "DeletedPod"
@@ -532,4 +584,5 @@ const (
 	ValidateAction  K8sEventAction = "Validate"
 	ReconcileAction K8sEventAction = "Reconcile"
 	CleanupAction   K8sEventAction = "Cleanup"
+	SuspendAction   K8sEventAction = "Suspend"
 )

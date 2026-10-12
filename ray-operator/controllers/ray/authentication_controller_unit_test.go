@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -50,8 +50,8 @@ func setupScheme() *runtime.Scheme {
 	_ = rayv1.AddToScheme(s)
 	_ = configv1.AddToScheme(s)
 	_ = routev1.AddToScheme(s)
-	_ = gatewayv1.AddToScheme(s)
-	_ = gatewayv1beta1.AddToScheme(s)
+	_ = gatewayv1.Install(s)
+	_ = gatewayv1beta1.Install(s)
 	return s
 }
 
@@ -396,7 +396,7 @@ func TestEnsureOAuthServiceAccount(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -471,7 +471,7 @@ func TestEnsureOIDCConfigMap(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -565,7 +565,7 @@ func TestEnsureHttpRoute(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -660,7 +660,7 @@ func TestMapAuthResourceToRayClusters(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Create a fake auth resource to trigger mapping
@@ -771,7 +771,7 @@ func TestReconcile_RayClusterNotFound(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: false,
 		},
@@ -814,7 +814,7 @@ func TestReconcile_ManagedByExternalController(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: false,
 		},
@@ -914,7 +914,7 @@ func TestCleanupOIDCResources(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 			}
 
 			// Execute cleanup
@@ -1008,7 +1008,7 @@ func TestEnforceEnableIngressFalseOnOpenShift(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},
@@ -1065,7 +1065,7 @@ func TestEnforceEnableIngressFalseOnOpenShift_Idempotency(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -1279,7 +1279,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			pending, err := controller.ensureAutoscalerRoleBindingForAuthSA(ctx, tc.cluster, tc.authMode, ctrl.Log)

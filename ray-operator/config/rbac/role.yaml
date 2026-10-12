@@ -63,6 +63,17 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services/proxy
   verbs:
   - create
@@ -171,6 +182,7 @@ rules:
   - gateways
   verbs:
   - create
+  - delete
   - get
   - list
   - update

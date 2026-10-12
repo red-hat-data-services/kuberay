@@ -736,7 +736,7 @@ func TestCheckMTLSSecretsReady_AutoGenerate_CertNotReady(t *testing.T) {
 	r := &RayClusterReconciler{Client: fakeClient, Scheme: s}
 
 	err := r.checkMTLSSecretsReady(context.Background(), cluster)
-	require.Error(t, err, "should fail when the certificate is not ready")
+	require.Error(t, err, "should fail when certificate is not ready")
 	assert.Contains(t, err.Error(), "not ready")
 }
 

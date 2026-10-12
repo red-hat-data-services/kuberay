@@ -283,8 +283,10 @@ env_vars:
 			WithSpec(rayv1ac.RayJobSpec().
 				WithRayClusterSpec(NewRayClusterSpec()).
 				WithEntrypoint("python -c \"import time; time.sleep(60)\"").
-				WithShutdownAfterJobFinishes(true).
-				WithSubmitterPodTemplate(JobSubmitterPodTemplateApplyConfiguration()))
+				// BackoffLimit=0 prevents the submitter Job from retrying after the head Pod is deleted.
+				// Otherwise it may resubmit to the recreated (non GCS FT) head pod and non-deterministically succeed.
+				WithSubmitterConfig(rayv1ac.SubmitterConfig().WithBackoffLimit(0)).
+				WithShutdownAfterJobFinishes(true))
 
 		rayJob, err := test.Client().Ray().RayV1().RayJobs(namespace.Name).Apply(test.Ctx(), rayJobAC, TestApplyOptions)
 		g.Expect(err).NotTo(HaveOccurred())

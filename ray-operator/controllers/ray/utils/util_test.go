@@ -1140,6 +1140,41 @@ func TestIsAutoscalingV2Enabled(t *testing.T) {
 	}
 }
 
+func TestIsAutoscalingV1Enabled(t *testing.T) {
+	tests := map[string]struct {
+		spec     *rayv1.RayClusterSpec
+		expected bool
+	}{
+		"should be false when spec is nil": {
+			spec:     nil,
+			expected: false,
+		},
+		"should be false when autoscaler options is nil": {
+			spec: &rayv1.RayClusterSpec{
+				AutoscalerOptions: nil,
+			},
+			expected: false,
+		},
+		"should be false when autoscaler options is not v1": {
+			spec: &rayv1.RayClusterSpec{
+				AutoscalerOptions: &rayv1.AutoscalerOptions{Version: ptr.To(rayv1.AutoscalerVersionV2)},
+			},
+			expected: false,
+		},
+		"should be true when autoscaler options is v1": {
+			spec: &rayv1.RayClusterSpec{
+				AutoscalerOptions: &rayv1.AutoscalerOptions{Version: ptr.To(rayv1.AutoscalerVersionV1)},
+			},
+			expected: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsAutoscalingV1Enabled(tc.spec))
+		})
+	}
+}
+
 func TestIsGCSFaultToleranceEnabled(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1259,6 +1294,31 @@ func createRayClusterTemplate(
 	}
 
 	return cluster
+}
+
+func TestCalculatePodResourceDoesNotMutateInput(t *testing.T) {
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU: resource.MustParse("1"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("200Mi"),
+					},
+				},
+			},
+		},
+	}
+	wantRequests := podSpec.Containers[0].Resources.Requests.DeepCopy()
+
+	got := CalculatePodResource(podSpec)
+
+	assert.Equal(t, "1", got.Cpu().String())
+	assert.Equal(t, "200Mi", got.Memory().String())
+	assert.Equal(t, wantRequests, podSpec.Containers[0].Resources.Requests)
 }
 
 func TestCalculateResources(t *testing.T) {
@@ -1398,6 +1458,72 @@ func TestCalculateResources(t *testing.T) {
 				},
 				minResources: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("1"),
+					corev1.ResourceMemory: resource.MustParse("100Mi"),
+				},
+			},
+		},
+		{
+			name: "Head pod with suspended worker group with min replicas",
+			cluster: createRayClusterTemplate(headStruct, []struct {
+				replicas    *int32
+				minReplicas *int32
+				suspend     *bool
+				cpu         string
+				memory      string
+				numOfHosts  int32
+			}{
+				{
+					numOfHosts:  1,
+					replicas:    ptr.To[int32](3),
+					minReplicas: ptr.To[int32](2),
+					cpu:         "4",
+					memory:      "200Mi",
+					suspend:     new(true),
+				},
+			}),
+			expected: struct {
+				desiredResources corev1.ResourceList
+				minResources     corev1.ResourceList
+			}{
+				desiredResources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("1"),
+					corev1.ResourceMemory: resource.MustParse("100Mi"),
+				},
+				minResources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("1"),
+					corev1.ResourceMemory: resource.MustParse("100Mi"),
+				},
+			},
+		},
+		{
+			name: "Head pod with worker group having max possible replicas",
+			cluster: createRayClusterTemplate(headStruct, []struct {
+				replicas    *int32
+				minReplicas *int32
+				suspend     *bool
+				cpu         string
+				memory      string
+				numOfHosts  int32
+			}{
+				{
+					numOfHosts:  1,
+					replicas:    ptr.To[int32](2147483647),
+					minReplicas: ptr.To[int32](2147483647),
+					cpu:         "1",
+					memory:      "0",
+					suspend:     nil,
+				},
+			}),
+			expected: struct {
+				desiredResources corev1.ResourceList
+				minResources     corev1.ResourceList
+			}{
+				desiredResources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("2147483648"),
+					corev1.ResourceMemory: resource.MustParse("100Mi"),
+				},
+				minResources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("2147483648"),
 					corev1.ResourceMemory: resource.MustParse("100Mi"),
 				},
 			},
@@ -1821,6 +1947,22 @@ func TestIsHTTPRouteEqual(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "Hostnames nil vs empty slice - equal",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					// Empty slice
+					Hostnames: []gwv1.Hostname{},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					// Nil slice
+					Hostnames: nil,
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "Different number of rules",
 			existing: &gwv1.HTTPRoute{
 				Spec: gwv1.HTTPRouteSpec{
@@ -1918,11 +2060,344 @@ func TestIsHTTPRouteEqual(t *testing.T) {
 			},
 			expected: false,
 		},
+
+		{
+			name: "Different ParentRefs",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					CommonRouteSpec: gwv1.CommonRouteSpec{
+						ParentRefs: []gwv1.ParentReference{
+							{Name: "gateway-old"},
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					CommonRouteSpec: gwv1.CommonRouteSpec{
+						ParentRefs: []gwv1.ParentReference{
+							{Name: "gateway-new"},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Hostnames",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Hostnames: []gwv1.Hostname{"example.com"},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Hostnames: []gwv1.Hostname{"different.com"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Matches",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							Matches: []gwv1.HTTPRouteMatch{
+								{Path: &gwv1.HTTPPathMatch{Value: new("/api")}},
+							},
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							Matches: []gwv1.HTTPRouteMatch{
+								{Path: &gwv1.HTTPPathMatch{Value: new("/v2")}},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Filters",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							Filters: []gwv1.HTTPRouteFilter{
+								{Type: gwv1.HTTPRouteFilterRequestHeaderModifier},
+							},
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							Filters: []gwv1.HTTPRouteFilter{
+								{Type: gwv1.HTTPRouteFilterRequestRedirect},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Filters nil vs empty slice, should be equal for our check.",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							// Nil slice
+							Filters: nil,
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							Filters: []gwv1.HTTPRouteFilter{},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Different Backend Namespace",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							BackendRefs: []gwv1.HTTPBackendRef{
+								{BackendRef: gwv1.BackendRef{BackendObjectReference: gwv1.BackendObjectReference{Name: "svc-a", Namespace: ptr.To(gwv1.Namespace("default"))}}},
+							},
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							BackendRefs: []gwv1.HTTPBackendRef{
+								{BackendRef: gwv1.BackendRef{BackendObjectReference: gwv1.BackendObjectReference{Name: "svc-a", Namespace: ptr.To(gwv1.Namespace("other-ns"))}}},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Backend Port",
+			existing: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							BackendRefs: []gwv1.HTTPBackendRef{
+								{BackendRef: gwv1.BackendRef{BackendObjectReference: gwv1.BackendObjectReference{Name: "svc-a", Port: ptr.To(gwv1.PortNumber(8000))}}},
+							},
+						},
+					},
+				},
+			},
+			desired: &gwv1.HTTPRoute{
+				Spec: gwv1.HTTPRouteSpec{
+					Rules: []gwv1.HTTPRouteRule{
+						{
+							BackendRefs: []gwv1.HTTPBackendRef{
+								{BackendRef: gwv1.BackendRef{BackendObjectReference: gwv1.BackendObjectReference{Name: "svc-a", Port: ptr.To(gwv1.PortNumber(9000))}}},
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := IsHTTPRouteEqual(tt.existing, tt.desired)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestIsGatewayEqual(t *testing.T) {
+	tests := []struct {
+		existing *gwv1.Gateway
+		desired  *gwv1.Gateway
+		name     string
+		expected bool
+	}{
+		{
+			name:     "Both nil",
+			existing: nil,
+			desired:  nil,
+			expected: true,
+		},
+		{
+			name:     "Existing nil",
+			desired:  &gwv1.Gateway{},
+			expected: false,
+		},
+		{
+			name:     "Desired nil",
+			existing: &gwv1.Gateway{},
+			expected: false,
+		},
+		{
+			name: "Exactly equal Gateways",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class",
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class",
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Different GatewayClassName",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class-old",
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class-new",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different number of Listeners",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+						{Name: "https", Protocol: gwv1.HTTPSProtocolType, Port: 443},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Listener Name",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http-old", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http-new", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Listener Protocol",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPSProtocolType, Port: 80},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Different Listener Port",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 8080},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Equal Gateways ignoring defaulted AllowedRoutes",
+			existing: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class",
+					Listeners: []gwv1.Listener{
+						{
+							Name:     "http",
+							Protocol: gwv1.HTTPProtocolType,
+							Port:     80,
+							AllowedRoutes: &gwv1.AllowedRoutes{
+								Namespaces: &gwv1.RouteNamespaces{
+									From: ptr.To(gwv1.NamespacesFromSame),
+								},
+							},
+						},
+					},
+				},
+			},
+			desired: &gwv1.Gateway{
+				Spec: gwv1.GatewaySpec{
+					GatewayClassName: "test-class",
+					Listeners: []gwv1.Listener{
+						{Name: "http", Protocol: gwv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsGatewayEqual(tt.existing, tt.desired)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1990,4 +2465,46 @@ func TestIsJobFinished(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetGcsFaultToleranceBackend(t *testing.T) {
+	assert.Equal(t, rayv1.GcsFTBackendRedis, GetGcsFaultToleranceBackend(nil))
+	assert.Equal(t, rayv1.GcsFTBackendRedis, GetGcsFaultToleranceBackend(&rayv1.GcsFaultToleranceOptions{}))
+	assert.Equal(t, rayv1.GcsFTBackendRedis, GetGcsFaultToleranceBackend(&rayv1.GcsFaultToleranceOptions{Backend: rayv1.GcsFTBackendRedis}))
+	assert.Equal(t, rayv1.GcsFTBackendRocksDB, GetGcsFaultToleranceBackend(&rayv1.GcsFaultToleranceOptions{Backend: rayv1.GcsFTBackendRocksDB}))
+}
+
+func TestIsGCSFaultToleranceEmbedded(t *testing.T) {
+	assert.False(t, IsGCSFaultToleranceEmbedded(nil))
+	assert.False(t, IsGCSFaultToleranceEmbedded(&rayv1.GcsFaultToleranceOptions{}))
+	assert.False(t, IsGCSFaultToleranceEmbedded(&rayv1.GcsFaultToleranceOptions{Backend: rayv1.GcsFTBackendRedis}))
+	assert.True(t, IsGCSFaultToleranceEmbedded(&rayv1.GcsFaultToleranceOptions{Backend: rayv1.GcsFTBackendRocksDB}))
+}
+
+func TestSupportsFlexibleRestartPolicy(t *testing.T) {
+	// Empty / unspecified version → original behavior (restrict to Never).
+	assert.False(t, SupportsFlexibleRestartPolicy(""))
+	// Invalid version string → treated as unsupported.
+	assert.False(t, SupportsFlexibleRestartPolicy("not-a-version"))
+	// Below the minimum → restrict to Never.
+	assert.False(t, SupportsFlexibleRestartPolicy("2.55.0"))
+	assert.False(t, SupportsFlexibleRestartPolicy("2.55.9"))
+	// Exactly the minimum → flexible policy allowed.
+	assert.True(t, SupportsFlexibleRestartPolicy("2.56.0"))
+	// Above the minimum → flexible policy allowed.
+	assert.True(t, SupportsFlexibleRestartPolicy("2.57.0"))
+	assert.True(t, SupportsFlexibleRestartPolicy("3.0.0"))
+}
+
+func TestGetGCSStoragePVCName(t *testing.T) {
+	instance := &rayv1.RayCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster"},
+		Spec: rayv1.RayClusterSpec{
+			GcsFaultToleranceOptions: &rayv1.GcsFaultToleranceOptions{Backend: rayv1.GcsFTBackendRocksDB},
+		},
+	}
+	assert.Equal(t, "my-cluster-gcs-pvc", GetGCSStoragePVCName(instance))
+
+	instance.Spec.GcsFaultToleranceOptions.Storage = &rayv1.GcsEmbeddedStorage{ClaimName: "byo-pvc"}
+	assert.Equal(t, "byo-pvc", GetGCSStoragePVCName(instance))
 }

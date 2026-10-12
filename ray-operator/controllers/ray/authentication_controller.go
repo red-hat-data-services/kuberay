@@ -17,7 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -76,7 +76,7 @@ func init() {
 // resources (ConfigMaps, ServiceAccounts, OpenShift Routes) and manages authentication configurations for Ray clusters on Openshift.
 type AuthenticationController struct {
 	client.Client
-	Recorder   record.EventRecorder
+	Recorder   events.EventRecorder
 	Scheme     *runtime.Scheme
 	RESTMapper meta.RESTMapper
 	options    RayClusterReconcilerOptions
@@ -88,7 +88,7 @@ func NewAuthenticationController(mgr manager.Manager, options RayClusterReconcil
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		RESTMapper: mgr.GetRESTMapper(),
-		Recorder:   mgr.GetEventRecorderFor("authentication-controller"),
+		Recorder:   mgr.GetEventRecorder("authentication-controller"),
 		options:    options,
 	}
 }
@@ -296,7 +296,7 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 	}
 
 	eventMsg := fmt.Sprintf("Authentication configured for RayCluster (mode: %s)", authMode)
-	r.Recorder.Event(rayCluster, "Normal", "AuthenticationConfigured", eventMsg)
+	r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "AuthenticationConfigured", string(utils.CreateAction), eventMsg)
 	return nil
 }
 
@@ -600,8 +600,8 @@ func (r *AuthenticationController) cleanupOldHTTPRouteFromClusterNamespace(ctx c
 	logger.Info("Deleted old HTTPRoute from cluster namespace (migration complete)",
 		"name", oldHttpRouteName,
 		"namespace", cluster.Namespace)
-	r.Recorder.Event(cluster, "Normal", "HTTPRouteMigrated",
-		fmt.Sprintf("Migrated HTTPRoute from %s to platform namespace", cluster.Namespace))
+	r.Recorder.Eventf(cluster, nil, corev1.EventTypeNormal, "HTTPRouteMigrated", string(utils.UpdateAction),
+		"Migrated HTTPRoute from %s to platform namespace", cluster.Namespace)
 
 	return nil
 }
@@ -1023,13 +1023,11 @@ func (r *AuthenticationController) enforceEnableIngressFalseOnOpenShift(ctx cont
 	if wasTrue {
 		logger.Info("Overrode user-specified enableIngress from true to false for Gateway-only access",
 			"cluster", rayCluster.Name)
-		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
-			"EnableIngressEnforced",
+		r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "EnableIngressEnforced", string(utils.UpdateAction),
 			"Set enableIngress to false to enforce Gateway-only access (overrode user value)")
 	} else if wasMissing {
 		logger.Info("Set enableIngress to false for Gateway-only access (was not set)", "cluster", rayCluster.Name)
-		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
-			"EnableIngressSet",
+		r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "EnableIngressSet", string(utils.UpdateAction),
 			"Set enableIngress to false for Gateway-only access")
 	}
 

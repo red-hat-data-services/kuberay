@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -131,7 +131,7 @@ func TestHandleDeletion(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},
@@ -232,7 +232,7 @@ func TestCleanupOrphanedReferenceGrant(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},
@@ -299,7 +299,7 @@ func TestFullReconciliationLifecycle(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(100),
+		Recorder:   events.NewFakeRecorder(100),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -484,7 +484,7 @@ func TestHTTPRoutePathMatchingRules(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -603,7 +603,7 @@ func TestEnsureServiceAccountGeneric(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},
@@ -654,7 +654,7 @@ func TestReconcileWithClusterNotFoundCleansUpOrphans(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},

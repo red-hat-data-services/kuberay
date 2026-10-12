@@ -324,7 +324,7 @@ _Appears in:_
 | `redisUsername` _[RedisCredential](#rediscredential)_ |  |  |  |
 | `redisPassword` _[RedisCredential](#rediscredential)_ |  |  |  |
 | `externalStorageNamespace` _string_ |  |  |  |
-| `redisAddress` _string_ | RedisAddress is the address of the external Redis service. Required when<br />Backend is "redis"; must be empty for "rocksdb". |  |  |
+| `redisAddress` _string_ | RedisAddress is the address of the external Redis service used when Backend<br />is "redis". It may alternatively be supplied via env vars/annotations. |  |  |
 | `storage` _[GcsEmbeddedStorage](#gcsembeddedstorage)_ | Storage configures the persistent volume backing the embedded RocksDB<br />store. Only used when Backend is "rocksdb". |  |  |
 
 
@@ -344,6 +344,7 @@ _Appears in:_
 | `template` _[PodTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#podtemplatespec-v1-core)_ | Template is the exact pod template used in K8s deployments, statefulsets, etc. |  |  |
 | `headService` _[Service](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#service-v1-core)_ | HeadService is the Kubernetes service of the head pod. |  |  |
 | `enableIngress` _boolean_ | EnableIngress indicates whether operator should create ingress object for head service or not. |  |  |
+| `ingressOptions` _[IngressOptions](#ingressoptions)_ | IngressOptions specifies optional ingress configuration for the head service. |  |  |
 | `resources` _object (keys:string, values:string)_ | Resources specifies the resource quantities for the head group.<br />These values override the resources passed to `rayStartParams` for the group, but<br />have no effect on the resources set at the K8s Pod container level. |  |  |
 | `labels` _object (keys:string, values:string)_ | Labels specifies the Ray node labels for the head group.<br />These labels will also be added to the Pods of this head group and override the `--labels`<br />argument passed to `rayStartParams`. |  |  |
 | `rayStartParams` _object (keys:string, values:string)_ | RayStartParams are the params of the start command: node-manager-port, object-store-memory, ... |  |  |
@@ -564,6 +565,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `jobTemplate` _[RayJobSpec](#rayjobspec)_ | JobTemplate defines the job spec that will be created by cron scheduling |  |  |
 | `schedule` _string_ | Schedule is the cron schedule string |  |  |
+| `timeZone` _string_ | TimeZone is the time zone name for the given schedule. If not specified, default to the local time zone of the<br />Kuberay Operator. Empty string is not allowed.<br />The bundled version of the time zone database is used. |  | MinLength: 1 <br /> |
 | `suspend` _boolean_ | Suspend tells the controller to suspend the scheduling, it does not apply to<br />scheduled RayJob. |  |  |
 
 
@@ -669,6 +671,7 @@ _Appears in:_
 | `serveConfigV2` _string_ | Important: Run "make" to regenerate code after modifying this file<br />Defines the applications and deployments to deploy, should be a YAML multi-line scalar string. |  |  |
 | `rayClusterConfig` _[RayClusterSpec](#rayclusterspec)_ |  |  |  |
 | `excludeHeadPodFromServeSvc` _boolean_ | If the field is set to true, the value of the label `ray.io/serve` on the head Pod should always be false.<br />Therefore, the head Pod's endpoint will not be added to the Kubernetes Serve service. |  |  |
+| `suspend` _boolean_ | Suspend indicates whether the RayService should suspend its execution. When set to true,<br />all Kubernetes resources owned by the RayService controller will be deleted. Setting it<br />back to false will allow the RayService controller to recreate the resources. |  |  |
 
 
 
@@ -863,6 +866,10 @@ _Appears in:_
 
 Package v1alpha1 contains API Schema definitions for the ray v1alpha1 API group
 
+Deprecated: ray.io/v1alpha1 is served for backward compatibility only, is
+frozen at its December 2023 feature set, and will be unavailable in KubeRay
+1.9. Use github.com/ray-project/kuberay/ray-operator/apis/ray/v1 instead.
+
 ### Resource Types
 - [RayCluster](#raycluster)
 - [RayJob](#rayjob)
@@ -922,6 +929,11 @@ _Appears in:_
 
 RayCluster is the Schema for the RayClusters API
 
+Deprecated: ray.io/v1alpha1 is deprecated. It is served for backward
+compatibility only, is frozen at its December 2023 feature set, and will be
+unavailable in KubeRay 1.9. Use ray.io/v1, the storage version, for all new
+and existing RayClusters.
+
 
 
 
@@ -963,6 +975,11 @@ _Appears in:_
 
 
 RayJob is the Schema for the rayjobs API
+
+Deprecated: ray.io/v1alpha1 is deprecated. It is served for backward
+compatibility only, is frozen at its December 2023 feature set, and will be
+unavailable in KubeRay 1.9. Use ray.io/v1, the storage version, for all new
+and existing RayJobs.
 
 
 
@@ -1011,6 +1028,11 @@ _Appears in:_
 
 
 RayService is the Schema for the rayservices API
+
+Deprecated: ray.io/v1alpha1 is deprecated. It is served for backward
+compatibility only, is frozen at its December 2023 feature set, and will be
+unavailable in KubeRay 1.9. Use ray.io/v1, the storage version, for all new
+and existing RayServices.
 
 
 

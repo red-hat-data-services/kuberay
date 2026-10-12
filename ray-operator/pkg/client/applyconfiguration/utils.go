@@ -44,6 +44,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rayv1.HeadInfoApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("HistoryServerOptions"):
 		return &rayv1.HistoryServerOptionsApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("IngressOptions"):
+		return &rayv1.IngressOptionsApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NetworkPolicyConfig"):
 		return &rayv1.NetworkPolicyConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NetworkPolicyRules"):
