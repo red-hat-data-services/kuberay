@@ -162,7 +162,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - events
   - persistentvolumeclaims
   - pods/status
   - serviceaccounts
@@ -207,17 +206,6 @@ rules:
   - ""
   resources:
   - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts
   verbs:
   - create
   - delete

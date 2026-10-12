@@ -19,7 +19,7 @@ env:
   KUBERAY_TEST_TIMEOUT_SHORT: 5m
   KUBERAY_TEST_TIMEOUT_MEDIUM: 12m
   KUBERAY_TEST_TIMEOUT_LONG: 15m
-  KUBERAY_TEST_RAY_IMAGE: rayproject/ray:2.52.1
+  KUBERAY_TEST_RAY_IMAGE: rayproject/ray:2.55.0
 
 jobs:
   build-operator:

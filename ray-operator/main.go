@@ -381,15 +381,6 @@ func main() {
 	exitOnError(ray.NewRayJobReconciler(ctx, mgr, rayJobOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayJob")
 
-	if features.Enabled(features.RayClusterMTLS) {
-		if certManagerAvailable {
-			exitOnError(ray.NewRayClusterMTLSController(mgr).SetupWithManager(mgr),
-				"unable to create controller", "controller", "RayClusterMTLS")
-		} else {
-			setupLog.Info("cert-manager API not found; mTLS controller disabled")
-		}
-	}
-
 	if features.Enabled(features.RayClusterNetworkPolicy) {
 		networkPolicyController, err := ray.NewNetworkPolicyController(mgr)
 		exitOnError(err, "unable to create controller", "controller", "NetworkPolicy")
@@ -425,16 +416,6 @@ func main() {
 			"unable to create controller", "controller", "RayCronJob")
 	} else {
 		setupLog.Info("RayCronJob feature gate is disabled, skipping RayCronJob controller setup")
-	}
-
-	if features.Enabled(features.RayClusterNetworkPolicy) {
-		setupLog.Info("RayClusterNetworkPolicy feature gate is enabled, starting NetworkPolicy controller")
-		networkPolicyController, err := ray.NewNetworkPolicyController(mgr)
-		exitOnError(err, "unable to create controller", "controller", "NetworkPolicy")
-		exitOnError(networkPolicyController.SetupWithManager(mgr, config.ReconcileConcurrency),
-			"unable to setup controller", "controller", "NetworkPolicy")
-	} else {
-		setupLog.Info("RayClusterNetworkPolicy feature gate is disabled, skipping NetworkPolicy controller setup")
 	}
 
 	// +kubebuilder:scaffold:builder
