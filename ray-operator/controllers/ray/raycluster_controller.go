@@ -89,6 +89,10 @@ type RayClusterReconcilerOptions struct {
 	WorkerSidecarContainers  []corev1.Container
 	DefaultContainerEnvs     []corev1.EnvVar
 	IsOpenShift              bool
+	// OIDCProxyTLSArgs is an ODH/RHOAI carry (RHOAIENG-95575): kube-rbac-proxy
+	// flags derived from the OpenShift APIServer TLS profile and injected into
+	// the auth sidecar. Empty on non-OpenShift. Not present upstream.
+	OIDCProxyTLSArgs []string
 }
 
 // Reconcile reads that state of the cluster for a RayCluster object and makes changes based on it
@@ -784,6 +788,21 @@ func (r *RayClusterReconciler) reconcilePods(ctx context.Context, instance *rayv
 			"Ray container terminated status", getRayContainerStateTerminated(headPod))
 
 		shouldDelete, reason := shouldDeletePod(headPod, rayv1.HeadNode)
+		// ODH/RHOAI carry (RHOAIENG-95575): the OpenShift TLS profile is resolved
+		// at operator start and stamped on the kube-rbac-proxy sidecar. Head Pods
+		// are immutable, so a profile change must delete the head for recreation.
+		// Sidecar-mode RayJobs use the same skip as the zero-head path
+		// (ray.io/disable-provisioned-head-restart) to avoid a stuck job.
+		if !shouldDelete && r.oidcProxyTLSProfileChanged(instance, headPod) {
+			if meta.IsStatusConditionTrue(instance.Status.Conditions, string(rayv1.RayClusterProvisioned)) &&
+				shouldSkipHeadPodRestart(instance) {
+				logger.Info("OIDC proxy TLS profile changed; skipped head recreation due to ray.io/disable-provisioned-head-restart",
+					"rayCluster", instance.Name, "headPod", headPod.Name)
+			} else {
+				shouldDelete = true
+				reason = fmt.Sprintf("OIDC proxy TLS profile changed; head Pod %s must be recreated", headPod.Name)
+			}
+		}
 
 		// Check if mTLS is enabled but pod doesn't have mTLS configuration
 		if !shouldDelete && r.isMTLSEnabled(instance) && !podHasMTLSConfiguration(headPod) {
@@ -1614,12 +1633,22 @@ func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.
 			&podConf.Spec,
 			&instance,
 			authMode,
-			GetOIDCProxySidecar,
+			func(cluster *rayv1.RayCluster) corev1.Container {
+				return GetOIDCProxySidecar(cluster, r.options.OIDCProxyTLSArgs)
+			},
 			GetOIDCProxyVolumes,
 			namer.ServiceAccountName(authMode),
 		)
 
 		if result.Injected {
+			// ODH/RHOAI carry (RHOAIENG-95575): stamp the resolved TLS flags so
+			// reconcilePods can detect a later APIServer profile change.
+			if len(r.options.OIDCProxyTLSArgs) > 0 {
+				if podConf.Annotations == nil {
+					podConf.Annotations = make(map[string]string)
+				}
+				podConf.Annotations[utils.OIDCProxyTLSProfileAnnotationKey] = strings.Join(r.options.OIDCProxyTLSArgs, ",")
+			}
 			logger.Info("Authentication sidecar injected successfully",
 				"cluster", instance.Name,
 				"authType", result.AuthType,
@@ -1643,6 +1672,28 @@ func (r *RayClusterReconciler) buildHeadPod(ctx context.Context, instance rayv1.
 	}
 
 	return pod
+}
+
+// oidcProxyTLSProfileChanged is an ODH/RHOAI carry (RHOAIENG-95575): true when
+// an auth-enabled head Pod's stamped kube-rbac-proxy TLS flags differ from the
+// operator's current OpenShift APIServer profile. A missing stamp is a legacy
+// Pod (pre-this-change), not a mismatch — otherwise the first upgrade would
+// delete every authenticated head. Not present upstream.
+func (r *RayClusterReconciler) oidcProxyTLSProfileChanged(instance *rayv1.RayCluster, pod corev1.Pod) bool {
+	if len(r.options.OIDCProxyTLSArgs) == 0 {
+		return false
+	}
+	authMode := utils.DetectAuthenticationMode(r.options.IsOpenShift)
+	if !utils.ShouldEnableOAuth(instance, authMode) && !utils.ShouldEnableOIDC(instance, authMode) {
+		return false
+	}
+	current, exists := pod.Annotations[utils.OIDCProxyTLSProfileAnnotationKey]
+	if !exists {
+		// Pre-95575 head Pods have no stamp. Do not treat that as a profile
+		// mismatch or every auth-enabled cluster would roll on first upgrade.
+		return false
+	}
+	return current != strings.Join(r.options.OIDCProxyTLSArgs, ",")
 }
 
 func getCreatorCRDType(instance rayv1.RayCluster) utils.CRDType {
