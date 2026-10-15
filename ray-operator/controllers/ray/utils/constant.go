@@ -27,6 +27,10 @@ const (
 	UpgradeStrategyRecreateHashKey           = "ray.io/upgrade-strategy-recreate-hash"
 	NumWorkerGroupsKey                       = "ray.io/num-worker-groups"
 	KubeRayVersion                           = "ray.io/kuberay-version"
+	// OIDCProxyTLSProfileAnnotationKey is an ODH/RHOAI carry (RHOAIENG-95575):
+	// stamps kube-rbac-proxy TLS flags on the Ray head so a later APIServer
+	// profile change can recreate the Pod. Not present upstream.
+	OIDCProxyTLSProfileAnnotationKey = "ray.io/oidc-proxy-tls-profile"
 
 	// NetworkPolicy annotation key - when present on a RayCluster, enables NetworkPolicy creation
 	EnableSecureTrustedNetworkAnnotationKey = "odh.ray.io/secure-trusted-network"
