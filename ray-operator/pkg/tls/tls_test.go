@@ -3,6 +3,8 @@ package tls
 import (
 	"context"
 	"crypto/tls"
+	"reflect"
+	"strings"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -229,6 +231,75 @@ func TestParseProfile(t *testing.T) {
 				if c != tt.wantCiphers[i] {
 					t.Errorf("parseProfile() ciphers[%d] = %d, want %d", i, c, tt.wantCiphers[i])
 				}
+			}
+		})
+	}
+}
+
+func cipherSuiteNames(ids []uint16) []string {
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = tls.CipherSuiteName(id)
+	}
+	return names
+}
+
+func TestProxyTLSArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile *configv1.TLSSecurityProfile
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "nil profile uses Intermediate",
+			profile: nil,
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=" + strings.Join(cipherSuiteNames(intermediateCiphers), ","),
+			},
+		},
+		{
+			name:    "Intermediate",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType},
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=" + strings.Join(cipherSuiteNames(intermediateCiphers), ","),
+			},
+		},
+		{
+			name:    "Modern omits cipher restriction",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			want:    []string{"--tls-min-version=VersionTLS13"},
+		},
+		{
+			name: "Custom",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType, Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+				MinTLSVersion: "VersionTLS12",
+				Ciphers:       []string{"ECDHE-RSA-AES256-GCM-SHA384"},
+			}}},
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			},
+		},
+		{
+			name:    "unknown profile type is an error",
+			profile: &configv1.TLSSecurityProfile{Type: "SuperSecure"},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ProxyTLSArgs(tt.profile)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ProxyTLSArgs() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ProxyTLSArgs() = %v, want %v", got, tt.want)
 			}
 		})
 	}

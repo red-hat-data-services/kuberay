@@ -74,6 +74,13 @@ var tlsVersionMap = map[configv1.TLSProtocolVersion]uint16{
 	"VersionTLS13": tls.VersionTLS13,
 }
 
+var tlsVersionFlag = map[uint16]string{
+	tls.VersionTLS10: "VersionTLS10",
+	tls.VersionTLS11: "VersionTLS11",
+	tls.VersionTLS12: "VersionTLS12",
+	tls.VersionTLS13: "VersionTLS13",
+}
+
 // implementedCipherSuites returns every TLS <=1.2 cipher suite ID (and its
 // IANA name) implemented by the Go crypto/tls package running this binary
 // that this operator is willing to negotiate, covering both the secure
@@ -343,6 +350,30 @@ func parseCustomProfile(custom *configv1.CustomTLSProfile) (uint16, []uint16, er
 		return 0, nil, errors.New("custom TLS profile specified ciphers but none are implemented by this binary's TLS stack")
 	}
 	return minVersion, ciphers, nil
+}
+
+// ProxyTLSArgs is an ODH/RHOAI carry (RHOAIENG-95575): kube-rbac-proxy flags
+// for a TLS profile. kube-rbac-proxy expects Go crypto/tls constant names.
+// TLS 1.3 profiles omit --tls-cipher-suites (Go ignores CipherSuites for TLS 1.3).
+// A nil or empty profile resolves to Intermediate, matching Resolve().
+func ProxyTLSArgs(profile *configv1.TLSSecurityProfile) ([]string, error) {
+	minVersion, ciphers, err := parseProfile(profile)
+	if err != nil {
+		return nil, err
+	}
+	version, ok := tlsVersionFlag[minVersion]
+	if !ok {
+		return nil, fmt.Errorf("unsupported TLS min version %d", minVersion)
+	}
+	args := []string{"--tls-min-version=" + version}
+	if len(ciphers) == 0 {
+		return args, nil
+	}
+	cipherNames := make([]string, len(ciphers))
+	for i, cipher := range ciphers {
+		cipherNames[i] = tls.CipherSuiteName(cipher)
+	}
+	return append(args, "--tls-cipher-suites="+strings.Join(cipherNames, ",")), nil
 }
 
 // SetupWatcher registers a controller that watches the APIServer resource
