@@ -3,6 +3,8 @@ package tls
 import (
 	"context"
 	"crypto/tls"
+	"reflect"
+	"strings"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -20,15 +22,16 @@ func TestParseProfile(t *testing.T) {
 		name           string
 		wantCiphers    []uint16
 		wantMinVersion uint16
+		wantErr        bool
 	}{
 		{
-			name:           "nil profile returns Intermediate defaults",
+			name:           "nil profile resolves to Intermediate",
 			profile:        nil,
 			wantMinVersion: tls.VersionTLS12,
 			wantCiphers:    intermediateCiphers,
 		},
 		{
-			name:           "empty profile returns Intermediate defaults",
+			name:           "empty profile resolves to Intermediate",
 			profile:        &configv1.TLSSecurityProfile{},
 			wantMinVersion: tls.VersionTLS12,
 			wantCiphers:    intermediateCiphers,
@@ -42,7 +45,7 @@ func TestParseProfile(t *testing.T) {
 			wantCiphers:    intermediateCiphers,
 		},
 		{
-			name: "Modern returns TLS 1.3 with nil ciphers",
+			name: "Modern returns TLS 1.3 with nil ciphers (CipherSuites does not control TLS 1.3)",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileModernType,
 			},
@@ -50,12 +53,54 @@ func TestParseProfile(t *testing.T) {
 			wantCiphers:    nil,
 		},
 		{
-			name: "Old returns TLS 1.0 with nil ciphers",
+			// The Old profile's canonical cipher list (configv1.TLSProfiles)
+			// also lists DHE-RSA-* suites (Go has no DHE support at all) and
+			// a number of CBC/3DES suites. CBC and 3DES are banned outright
+			// by isBannedCipherName regardless of profile, so only the
+			// AEAD (GCM/ChaCha20) suites survive filtering -- see
+			// TestParseProfile_RejectsBannedCiphers for the explicit checks.
+			name: "Old resolves to TLS 1.0 with explicit, runtime-supported, non-banned suites",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileOldType,
 			},
 			wantMinVersion: tls.VersionTLS10,
-			wantCiphers:    nil,
+			wantCiphers: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			},
+		},
+		{
+			name: "Unknown profile type returns an error, no silent Intermediate substitution",
+			profile: &configv1.TLSSecurityProfile{
+				Type: "SuperSecure",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Custom type with nil custom block returns an error",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Custom with unknown minTLSVersion returns an error",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: "NotAVersion",
+						Ciphers:       []string{"ECDHE-ECDSA-AES128-GCM-SHA256"},
+					},
+				},
+			},
+			wantErr: true,
 		},
 		{
 			name: "Custom with valid ciphers",
@@ -65,6 +110,20 @@ func TestParseProfile(t *testing.T) {
 					TLSProfileSpec: configv1.TLSProfileSpec{
 						MinTLSVersion: "VersionTLS12",
 						Ciphers:       []string{"ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384"},
+					},
+				},
+			},
+			wantMinVersion: tls.VersionTLS12,
+			wantCiphers:    []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384},
+		},
+		{
+			name: "Custom accepts IANA names as well as OpenSSL aliases",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: "VersionTLS12",
+						Ciphers:       []string{"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", "ECDHE-RSA-AES256-GCM-SHA384"},
 					},
 				},
 			},
@@ -86,7 +145,7 @@ func TestParseProfile(t *testing.T) {
 			wantCiphers:    []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		},
 		{
-			name: "Custom with all unsupported ciphers returns empty slice",
+			name: "Custom with all-unusable TLS <=1.2 ciphers returns an error",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileCustomType,
 				Custom: &configv1.CustomTLSProfile{
@@ -96,8 +155,7 @@ func TestParseProfile(t *testing.T) {
 					},
 				},
 			},
-			wantMinVersion: tls.VersionTLS12,
-			wantCiphers:    []uint16{},
+			wantErr: true,
 		},
 		{
 			name: "Custom with whitespace-padded cipher names still resolves",
@@ -128,18 +186,31 @@ func TestParseProfile(t *testing.T) {
 			wantCiphers:    []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		},
 		{
-			name: "Unknown type falls back to Intermediate",
+			name: "Custom Modern-equivalent minTLSVersion returns TLS 1.3 with nil ciphers",
 			profile: &configv1.TLSSecurityProfile{
-				Type: "SuperSecure",
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: "VersionTLS13",
+						Ciphers:       []string{"TLS_AES_128_GCM_SHA256"},
+					},
+				},
 			},
-			wantMinVersion: tls.VersionTLS12,
-			wantCiphers:    intermediateCiphers,
+			wantMinVersion: tls.VersionTLS13,
+			wantCiphers:    nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotMinVersion, gotCiphers := parseProfile(tt.profile)
+			gotMinVersion, gotCiphers, err := parseProfile(tt.profile)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseProfile() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
 
 			if gotMinVersion != tt.wantMinVersion {
 				t.Errorf("parseProfile() minVersion = %d, want %d", gotMinVersion, tt.wantMinVersion)
@@ -152,17 +223,153 @@ func TestParseProfile(t *testing.T) {
 				return
 			}
 
-			if gotCiphers == nil {
-				t.Fatal("expected non-nil empty slice, got nil")
-			}
 			if len(gotCiphers) != len(tt.wantCiphers) {
-				t.Errorf("parseProfile() ciphers length = %d, want %d", len(gotCiphers), len(tt.wantCiphers))
+				t.Errorf("parseProfile() ciphers = %v, want %v", gotCiphers, tt.wantCiphers)
 				return
 			}
 			for i, c := range gotCiphers {
 				if c != tt.wantCiphers[i] {
 					t.Errorf("parseProfile() ciphers[%d] = %d, want %d", i, c, tt.wantCiphers[i])
 				}
+			}
+		})
+	}
+}
+
+func cipherSuiteNames(ids []uint16) []string {
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = tls.CipherSuiteName(id)
+	}
+	return names
+}
+
+func TestProxyTLSArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile *configv1.TLSSecurityProfile
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "nil profile uses Intermediate",
+			profile: nil,
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=" + strings.Join(cipherSuiteNames(intermediateCiphers), ","),
+			},
+		},
+		{
+			name:    "Intermediate",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType},
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=" + strings.Join(cipherSuiteNames(intermediateCiphers), ","),
+			},
+		},
+		{
+			name:    "Modern omits cipher restriction",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			want:    []string{"--tls-min-version=VersionTLS13"},
+		},
+		{
+			name: "Custom",
+			profile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType, Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+				MinTLSVersion: "VersionTLS12",
+				Ciphers:       []string{"ECDHE-RSA-AES256-GCM-SHA384"},
+			}}},
+			want: []string{
+				"--tls-min-version=VersionTLS12",
+				"--tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			},
+		},
+		{
+			name:    "unknown profile type is an error",
+			profile: &configv1.TLSSecurityProfile{Type: "SuperSecure"},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ProxyTLSArgs(tt.profile)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ProxyTLSArgs() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ProxyTLSArgs() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseProfile_RejectsBannedCiphers is a regression test for a
+// GitHub Advanced Security / CodeQL finding (tls-config-lint: "3DES/CBC
+// cipher suite"): CBC-mode suites and 3DES must never be negotiable,
+// regardless of whether they are requested via an OpenSSL-style alias (as
+// listed in OpenShift's own "Old" named profile) or via a raw IANA cipher
+// suite name in a Custom profile. RC4 is included for the same reason,
+// since it is reachable the same way even though it was not itself
+// flagged.
+func TestParseProfile_RejectsBannedCiphers(t *testing.T) {
+	bannedNames := []string{
+		// OpenSSL-style aliases for suites OpenShift's "Old" profile lists.
+		"DES-CBC3-SHA",
+		"AES128-SHA",
+		"AES256-SHA",
+		"AES128-SHA256",
+		"ECDHE-RSA-AES128-SHA",
+		"ECDHE-ECDSA-AES128-SHA",
+		"ECDHE-RSA-AES256-SHA",
+		"ECDHE-ECDSA-AES256-SHA",
+		// Raw IANA names: implemented by Go, and so reachable via the
+		// byName path in resolveCipherName even though openSSLToGoCipher
+		// has no entry for them.
+		"TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+		"TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
+		"TLS_RSA_WITH_AES_128_CBC_SHA",
+		"TLS_RSA_WITH_AES_256_CBC_SHA",
+		"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+		"TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256",
+		"TLS_RSA_WITH_RC4_128_SHA",
+		"TLS_ECDHE_RSA_WITH_RC4_128_SHA",
+	}
+
+	for _, name := range bannedNames {
+		t.Run(name+" alone is rejected", func(t *testing.T) {
+			profile := &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: "VersionTLS12",
+						Ciphers:       []string{name},
+					},
+				},
+			}
+			_, _, err := parseProfile(profile)
+			if err == nil {
+				t.Fatalf("parseProfile() with only banned cipher %q: error = nil, want error", name)
+			}
+		})
+
+		t.Run(name+" is dropped when mixed with a good cipher", func(t *testing.T) {
+			profile := &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: "VersionTLS12",
+						Ciphers:       []string{name, "ECDHE-ECDSA-AES128-GCM-SHA256"},
+					},
+				},
+			}
+			_, ciphers, err := parseProfile(profile)
+			if err != nil {
+				t.Fatalf("parseProfile() error = %v, want nil", err)
+			}
+			if len(ciphers) != 1 || ciphers[0] != tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 {
+				t.Errorf("parseProfile() ciphers = %v, want only TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (banned cipher %q must be dropped)", ciphers, name)
 			}
 		})
 	}
@@ -182,6 +389,7 @@ func TestResolve(t *testing.T) {
 		wantProfileFetched bool
 		wantMinVersion     uint16
 		wantNilCiphers     bool
+		wantCiphers        []uint16
 	}{
 		{
 			name:               "APIServer not found falls back to Intermediate",
@@ -203,6 +411,99 @@ func TestResolve(t *testing.T) {
 			wantProfileFetched: true,
 			wantMinVersion:     tls.VersionTLS13,
 			wantNilCiphers:     true,
+		},
+		{
+			// Mirrors TestParseProfile's "Old resolves to TLS 1.0 with
+			// explicit, runtime-supported, non-banned suites" case, but
+			// asserts the suites actually land on a tls.Config once TLSOpts
+			// is applied, not just the parseProfile() return value.
+			name: "APIServer with Old profile resolves to explicit, runtime-supported suites",
+			objects: []runtime.Object{
+				&configv1.APIServer{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec: configv1.APIServerSpec{
+						TLSSecurityProfile: &configv1.TLSSecurityProfile{
+							Type: configv1.TLSProfileOldType,
+						},
+					},
+				},
+			},
+			wantProfileFetched: true,
+			wantMinVersion:     tls.VersionTLS10,
+			wantCiphers: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			},
+		},
+		{
+			// Asserts the applied tls.Config, not just parseProfile()'s
+			// return value, ends up with exactly the one requested OpenSSL
+			// alias resolved to its Go cipher suite ID.
+			name: "APIServer with Custom profile using supported OpenSSL aliases",
+			objects: []runtime.Object{
+				&configv1.APIServer{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec: configv1.APIServerSpec{
+						TLSSecurityProfile: &configv1.TLSSecurityProfile{
+							Type: configv1.TLSProfileCustomType,
+							Custom: &configv1.CustomTLSProfile{
+								TLSProfileSpec: configv1.TLSProfileSpec{
+									MinTLSVersion: "VersionTLS12",
+									Ciphers:       []string{"ECDHE-ECDSA-AES128-GCM-SHA256"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantProfileFetched: true,
+			wantMinVersion:     tls.VersionTLS12,
+			wantCiphers:        []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		},
+		{
+			name: "APIServer with malformed Custom profile (unknown minTLSVersion) is a fatal error",
+			objects: []runtime.Object{
+				&configv1.APIServer{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec: configv1.APIServerSpec{
+						TLSSecurityProfile: &configv1.TLSSecurityProfile{
+							Type: configv1.TLSProfileCustomType,
+							Custom: &configv1.CustomTLSProfile{
+								TLSProfileSpec: configv1.TLSProfileSpec{
+									MinTLSVersion: "NotAVersion",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "APIServer with Custom profile where every cipher is unusable is a fatal error",
+			objects: []runtime.Object{
+				&configv1.APIServer{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec: configv1.APIServerSpec{
+						TLSSecurityProfile: &configv1.TLSSecurityProfile{
+							Type: configv1.TLSProfileCustomType,
+							Custom: &configv1.CustomTLSProfile{
+								TLSProfileSpec: configv1.TLSProfileSpec{
+									MinTLSVersion: "VersionTLS12",
+									Ciphers:       []string{"DHE-RSA-AES128-GCM-SHA256"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
 		},
 	}
 
@@ -243,6 +544,18 @@ func TestResolve(t *testing.T) {
 			}
 			if tt.wantNilCiphers && cfg.CipherSuites != nil {
 				t.Errorf("CipherSuites should be nil for TLS 1.3, got %v", cfg.CipherSuites)
+			}
+			if tt.wantCiphers != nil {
+				if len(cfg.CipherSuites) != len(tt.wantCiphers) {
+					t.Errorf("CipherSuites = %v, want %v", cfg.CipherSuites, tt.wantCiphers)
+				} else {
+					for i, c := range cfg.CipherSuites {
+						if c != tt.wantCiphers[i] {
+							t.Errorf("CipherSuites = %v, want %v", cfg.CipherSuites, tt.wantCiphers)
+							break
+						}
+					}
+				}
 			}
 		})
 	}

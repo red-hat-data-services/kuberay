@@ -29,6 +29,12 @@ const (
 	KubeRayVersion                           = "ray.io/kuberay-version"
 	// EnableSecureTrustedNetworkAnnotationKey is the downstream legacy switch
 	// retained for compatibility with existing OpenShift RayClusters.
+	// OIDCProxyTLSProfileAnnotationKey is an ODH/RHOAI carry (RHOAIENG-95575):
+	// stamps kube-rbac-proxy TLS flags on the Ray head so a later APIServer
+	// profile change can recreate the Pod. Not present upstream.
+	OIDCProxyTLSProfileAnnotationKey = "ray.io/oidc-proxy-tls-profile"
+
+	// NetworkPolicy annotation key - when present on a RayCluster, enables NetworkPolicy creation
 	EnableSecureTrustedNetworkAnnotationKey = "odh.ray.io/secure-trusted-network"
 	RayCronJobNameLabelKey                  = "ray.io/cronjob-name"
 	RayCronJobTimestampAnnotationKey        = "ray.io/cronjob-scheduled-timestamp"

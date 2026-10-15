@@ -294,6 +294,14 @@ func main() {
 		setupLog.Error(err, "unable to resolve TLS configuration")
 		os.Exit(1)
 	}
+	// ODH/RHOAI carry (RHOAIENG-95575): same APIServer profile used for
+	// metrics/webhook TLS is converted to kube-rbac-proxy flags for the
+	// Ray head auth sidecar. Not present upstream.
+	proxyTLSArgs, err := pkgtls.ProxyTLSArgs(tlsResult.Profile)
+	if err != nil {
+		setupLog.Error(err, "unable to convert TLS profile to kube-rbac-proxy args")
+		os.Exit(1)
+	}
 	options.Metrics.TLSOpts = tlsResult.TLSOpts
 	options.Metrics.SecureServing = secureMetrics
 	if secureMetrics {
@@ -356,6 +364,7 @@ func main() {
 		DefaultPodAnnotations:    config.DefaultPodAnnotations,
 		DefaultPodLabels:         config.DefaultPodLabels,
 		CertManagerAvailable:     certManagerAvailable,
+		OIDCProxyTLSArgs:         proxyTLSArgs,
 	}
 	exitOnError(ray.NewReconciler(mgr, rayClusterOptions).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayCluster")
