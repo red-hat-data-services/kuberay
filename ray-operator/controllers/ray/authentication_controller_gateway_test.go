@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -59,7 +59,7 @@ func TestEnsureReferenceGrant(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -141,7 +141,7 @@ func TestSharedReferenceGrantMultipleClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -207,7 +207,7 @@ func TestCleanupReferenceGrantWithMultipleClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -277,7 +277,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -388,7 +388,7 @@ func TestCleanupOIDCResourcesWithCrossNamespace(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 	}
 
 	// Execute cleanup (this is the last cluster, so ReferenceGrant should be deleted)
@@ -479,7 +479,7 @@ func TestHTTPRouteNamingConflictPrevention(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -544,7 +544,7 @@ func TestEnsureOIDCResourcesCreatesReferenceGrantBeforeHTTPRoute(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -645,7 +645,7 @@ func TestHTTPRouteNameDNSLabelLimit(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},

@@ -5,12 +5,12 @@ import (
 
 	routev1 "github.com/openshift/api/route/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
+	"github.com/ray-project/kuberay/ray-operator/pkg/features"
 )
 
 // RayClusterDefaulter mutates RayClusters
@@ -20,13 +20,11 @@ type RayClusterDefaulter struct {
 
 //+kubebuilder:webhook:path=/mutate-ray-io-v1-raycluster,mutating=true,failurePolicy=fail,sideEffects=None,groups=ray.io,resources=rayclusters,verbs=create;update,versions=v1,name=mraycluster.kb.io,admissionReviewVersions=v1
 
-var _ webhook.CustomDefaulter = &RayClusterDefaulter{}
+var _ admission.Defaulter[*rayv1.RayCluster] = &RayClusterDefaulter{}
 
 // Default implements webhook.CustomDefaulter
-func (d *RayClusterDefaulter) Default(_ context.Context, obj runtime.Object) error {
-	rayCluster := obj.(*rayv1.RayCluster)
-
-	rayclusterlog.Info("default", "name", rayCluster.Name)
+func (d *RayClusterDefaulter) Default(_ context.Context, rayCluster *rayv1.RayCluster) error {
+	rayClusterLog.Info("default", "name", rayCluster.Name)
 
 	// Initialize annotations map if nil
 	if rayCluster.Annotations == nil {
@@ -35,8 +33,16 @@ func (d *RayClusterDefaulter) Default(_ context.Context, obj runtime.Object) err
 
 	// Set the secure network annotation based on platform
 	if d.isOpenShift() {
+		// Keep the legacy auth switch enabled independently of the optional
+		// mTLS and NetworkPolicy features.
 		rayCluster.Annotations[utils.EnableSecureTrustedNetworkAnnotationKey] = "true"
-		rayclusterlog.Info("enforcing secure trusted network on OpenShift", "name", rayCluster.Name, "namespace", rayCluster.Namespace)
+		if features.Enabled(features.RayClusterMTLS) {
+			utils.EnsureOpenShiftRayClusterMTLS(rayCluster)
+		}
+		if features.Enabled(features.RayClusterNetworkPolicy) {
+			utils.EnsureOpenShiftRayClusterNetworkPolicy(rayCluster)
+		}
+		rayClusterLog.Info("setting OpenShift RayCluster defaults", "name", rayCluster.Name, "namespace", rayCluster.Namespace)
 
 		// STRICT ENFORCEMENT: Always disable basic Route/Ingress creation on OpenShift
 		// This enforces Gateway API access only - no exceptions
@@ -44,7 +50,7 @@ func (d *RayClusterDefaulter) Default(_ context.Context, obj runtime.Object) err
 		// This prevents direct Route access and enforces centralized authentication via Gateway
 		falseValue := false
 		if rayCluster.Spec.HeadGroupSpec.EnableIngress != nil && *rayCluster.Spec.HeadGroupSpec.EnableIngress {
-			rayclusterlog.Info("overriding user-specified enableIngress from true to false to enforce Gateway-only access",
+			rayClusterLog.Info("overriding user-specified enableIngress from true to false to enforce Gateway-only access",
 				"name", rayCluster.Name, "namespace", rayCluster.Namespace)
 		}
 		rayCluster.Spec.HeadGroupSpec.EnableIngress = &falseValue
@@ -64,8 +70,7 @@ func (d *RayClusterDefaulter) isOpenShift() bool {
 
 // SetupRayClusterDefaulterWithManager registers the defaulting webhook for RayCluster
 func SetupRayClusterDefaulterWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&rayv1.RayCluster{}).
+	return ctrl.NewWebhookManagedBy(mgr, &rayv1.RayCluster{}).
 		WithDefaulter(&RayClusterDefaulter{
 			RESTMapper: mgr.GetRESTMapper(),
 		}).

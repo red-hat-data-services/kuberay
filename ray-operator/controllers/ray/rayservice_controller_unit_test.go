@@ -19,7 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/lru"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -139,7 +139,7 @@ func TestIsHeadPodRunningAndReady(t *testing.T) {
 	// Initialize RayService reconciler.
 	r := &RayServiceReconciler{
 		Client:   fakeClient,
-		Recorder: &record.FakeRecorder{},
+		Recorder: &events.FakeRecorder{},
 		Scheme:   scheme.Scheme,
 	}
 
@@ -220,7 +220,7 @@ func TestReconcileServices_UpdateService(t *testing.T) {
 	// Initialize RayCluster reconciler.
 	r := &RayServiceReconciler{
 		Client:   fakeClient,
-		Recorder: &record.FakeRecorder{},
+		Recorder: &events.FakeRecorder{},
 		Scheme:   scheme.Scheme,
 	}
 
@@ -304,7 +304,7 @@ func TestFetchHeadServiceURL(t *testing.T) {
 	ctx := context.TODO()
 	r := RayServiceReconciler{
 		Client:   fakeClient,
-		Recorder: &record.FakeRecorder{},
+		Recorder: &events.FakeRecorder{},
 		Scheme:   scheme.Scheme,
 	}
 
@@ -473,7 +473,7 @@ func TestReconcileRayCluster_CreatePendingCluster(t *testing.T) {
 	r := RayServiceReconciler{
 		Client:   fakeClient,
 		Scheme:   newScheme,
-		Recorder: record.NewFakeRecorder(1),
+		Recorder: events.NewFakeRecorder(1),
 	}
 
 	activeRayCluster, pendingRayCluster, err := r.reconcileRayCluster(ctx, &rayService)
@@ -550,7 +550,7 @@ func TestReconcileRayCluster_UpdateActiveCluster(t *testing.T) {
 			r := RayServiceReconciler{
 				Client:   fakeClient,
 				Scheme:   newScheme,
-				Recorder: record.NewFakeRecorder(1),
+				Recorder: events.NewFakeRecorder(1),
 			}
 
 			activeCluster, pendingCluster, err := r.reconcileRayCluster(ctx, service)
@@ -609,7 +609,7 @@ func TestReconcileRayCluster_UpdatePendingCluster(t *testing.T) {
 	r := RayServiceReconciler{
 		Client:   fakeClient,
 		Scheme:   newScheme,
-		Recorder: record.NewFakeRecorder(1),
+		Recorder: events.NewFakeRecorder(1),
 	}
 
 	activeCluster, pendingCluster, err := r.reconcileRayCluster(ctx, service)
@@ -703,7 +703,7 @@ func TestLabelHeadPodForServeStatus(t *testing.T) {
 			// Initialize RayService reconciler.
 			r := &RayServiceReconciler{
 				Client:   fakeClient,
-				Recorder: &record.FakeRecorder{},
+				Recorder: &events.FakeRecorder{},
 				Scheme:   newScheme,
 				httpProxyClientFunc: func(_, _, _ string, _ int) utils.RayHttpProxyClientInterface {
 					return fakeRayHttpProxyClient
@@ -906,7 +906,7 @@ func TestCalculateConditions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.TODO()
 			fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).Build()
-			fakeRecorder := record.NewFakeRecorder(10)
+			fakeRecorder := events.NewFakeRecorder(10)
 
 			r := &RayServiceReconciler{
 				Client:   fakeClient,
@@ -1388,7 +1388,7 @@ func TestRayClusterDeletionDelaySeconds(t *testing.T) {
 			r := RayServiceReconciler{
 				Client:                       fakeClient,
 				Scheme:                       newScheme,
-				Recorder:                     record.NewFakeRecorder(1),
+				Recorder:                     events.NewFakeRecorder(1),
 				RayClusterDeletionTimestamps: cmap.New[time.Time](),
 			}
 
@@ -1462,7 +1462,7 @@ func makeIncrementalUpgradeRayService(
 				RayClusterStatus: rayv1.RayClusterStatus{
 					Head: rayv1.HeadInfo{ServiceName: "pending-service"},
 				},
-				TrafficRoutedPercent:    ptr.To(int32(100) - *routedPercent),
+				TrafficRoutedPercent:    new(int32(100) - *routedPercent),
 				LastTrafficMigratedTime: lastTrafficMigratedTime,
 			},
 		},
@@ -1502,14 +1502,14 @@ func TestCreateGateway(t *testing.T) {
 		{
 			name:                "valid gateway creation",
 			expectedGatewayName: "incremental-ray-service-gateway",
-			rayService:          makeIncrementalUpgradeRayService(true, "gateway-class", ptr.To(int32(50)), ptr.To(int32(10)), ptr.To(int32(80)), &metav1.Time{Time: time.Now()}),
+			rayService:          makeIncrementalUpgradeRayService(true, "gateway-class", new(int32(50)), new(int32(10)), new(int32(80)), &metav1.Time{Time: time.Now()}),
 			expectErr:           false,
 			expectedClass:       "gateway-class",
 			expectedListeners:   1,
 		},
 		{
 			name:       "missing ClusterUpgradeOptions",
-			rayService: makeIncrementalUpgradeRayService(false, "gateway-class", ptr.To(int32(0)), ptr.To(int32(0)), ptr.To(int32(0)), &metav1.Time{Time: time.Now()}),
+			rayService: makeIncrementalUpgradeRayService(false, "gateway-class", new(int32(0)), new(int32(0)), new(int32(0)), &metav1.Time{Time: time.Now()}),
 			expectErr:  true,
 		},
 	}
@@ -1559,13 +1559,13 @@ func TestCreateHTTPRoute(t *testing.T) {
 		Status: rayv1.RayServiceStatuses{
 			ActiveServiceStatus: rayv1.RayServiceStatus{
 				RayClusterName:       activeCluster.Name,
-				TrafficRoutedPercent: ptr.To(int32(100)),
-				TargetCapacity:       ptr.To(int32(100)),
+				TrafficRoutedPercent: new(int32(100)),
+				TargetCapacity:       new(int32(100)),
 			},
 			PendingServiceStatus: rayv1.RayServiceStatus{
 				RayClusterName:       pendingCluster.Name,
-				TrafficRoutedPercent: ptr.To(int32(0)),
-				TargetCapacity:       ptr.To(int32(30)),
+				TrafficRoutedPercent: new(int32(0)),
+				TargetCapacity:       new(int32(30)),
 			},
 		},
 	}
@@ -1603,7 +1603,7 @@ func TestCreateHTTPRoute(t *testing.T) {
 			name: "NewClusterWithIncrementalUpgrade, time since LastTrafficMigratedTime >= IntervalSeconds.",
 			modifier: func(rs *rayv1.RayService) {
 				rs.Status.PendingServiceStatus.LastTrafficMigratedTime = &metav1.Time{Time: time.Now().Add(-time.Duration(interval+1) * time.Second)}
-				rs.Status.PendingServiceStatus.TargetCapacity = ptr.To(int32(60))
+				rs.Status.PendingServiceStatus.TargetCapacity = new(int32(60))
 			},
 			runtimeObjects:        []runtime.Object{activeCluster, pendingCluster, gateway, activeServeService, pendingServeService},
 			isPendingClusterReady: true,
@@ -1614,7 +1614,7 @@ func TestCreateHTTPRoute(t *testing.T) {
 			name: "NewClusterWithIncrementalUpgrade, TrafficRoutedPercent capped to pending TargetCapacity.",
 			modifier: func(rs *rayv1.RayService) {
 				rs.Status.PendingServiceStatus.LastTrafficMigratedTime = &metav1.Time{Time: time.Now().Add(-time.Duration(interval+1) * time.Second)}
-				rs.Status.PendingServiceStatus.TargetCapacity = ptr.To(int32(5))
+				rs.Status.PendingServiceStatus.TargetCapacity = new(int32(5))
 			},
 			runtimeObjects:        []runtime.Object{activeCluster, pendingCluster, gateway, activeServeService, pendingServeService},
 			isPendingClusterReady: true,
@@ -1651,13 +1651,13 @@ func TestCreateHTTPRoute(t *testing.T) {
 			newScheme := runtime.NewScheme()
 			_ = rayv1.AddToScheme(newScheme)
 			_ = corev1.AddToScheme(newScheme)
-			_ = gwv1.AddToScheme(newScheme)
+			_ = gwv1.Install(newScheme)
 			fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).WithRuntimeObjects(tt.runtimeObjects...).Build()
 
 			reconciler := RayServiceReconciler{
 				Client:   fakeClient,
 				Scheme:   newScheme,
-				Recorder: record.NewFakeRecorder(1),
+				Recorder: events.NewFakeRecorder(1),
 			}
 
 			route, err := reconciler.createHTTPRoute(ctx, rayService, tt.isPendingClusterReady)
@@ -1694,7 +1694,7 @@ func TestReconcileHTTPRoute(t *testing.T) {
 	newScheme := runtime.NewScheme()
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
-	_ = gwv1.AddToScheme(newScheme)
+	_ = gwv1.Install(newScheme)
 
 	ctx := context.TODO()
 	namespace := "test-ns"
@@ -1724,13 +1724,13 @@ func TestReconcileHTTPRoute(t *testing.T) {
 		Status: rayv1.RayServiceStatuses{
 			ActiveServiceStatus: rayv1.RayServiceStatus{
 				RayClusterName:       activeCluster.Name,
-				TrafficRoutedPercent: ptr.To(int32(100)),
-				TargetCapacity:       ptr.To(int32(100)),
+				TrafficRoutedPercent: new(int32(100)),
+				TargetCapacity:       new(int32(100)),
 			},
 			PendingServiceStatus: rayv1.RayServiceStatus{
 				RayClusterName:       pendingCluster.Name,
-				TrafficRoutedPercent: ptr.To(int32(0)),
-				TargetCapacity:       ptr.To(int32(100)),
+				TrafficRoutedPercent: new(int32(0)),
+				TargetCapacity:       new(int32(100)),
 			},
 		},
 	}
@@ -1815,7 +1815,7 @@ func TestReconcileHTTPRoute(t *testing.T) {
 			}
 
 			fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).WithRuntimeObjects(runtimeObjects...).Build()
-			reconciler := RayServiceReconciler{Client: fakeClient, Scheme: newScheme, Recorder: record.NewFakeRecorder(10)}
+			reconciler := RayServiceReconciler{Client: fakeClient, Scheme: newScheme, Recorder: events.NewFakeRecorder(10)}
 
 			reconciledRoute, err := reconciler.reconcileHTTPRoute(ctx, rayService, tt.isPendingClusterReady)
 			require.NoError(t, err)
@@ -1835,7 +1835,7 @@ func TestReconcileHTTPRoute(t *testing.T) {
 			// Assert ParentRef namespace is correctly set.
 			parent := reconciledRoute.Spec.ParentRefs[0]
 			assert.Equal(t, gwv1.ObjectName(gatewayName), parent.Name)
-			assert.Equal(t, ptr.To(gwv1.Namespace(namespace)), parent.Namespace)
+			assert.Equal(t, new(gwv1.Namespace(namespace)), parent.Namespace)
 		})
 	}
 }
@@ -1844,7 +1844,7 @@ func TestReconcileGateway(t *testing.T) {
 	newScheme := runtime.NewScheme()
 	_ = rayv1.AddToScheme(newScheme)
 	_ = corev1.AddToScheme(newScheme)
-	_ = gwv1.AddToScheme(newScheme)
+	_ = gwv1.Install(newScheme)
 
 	ctx := context.TODO()
 	namespace := "test-ns"
@@ -1852,10 +1852,10 @@ func TestReconcileGateway(t *testing.T) {
 	rayService := makeIncrementalUpgradeRayService(
 		true,
 		"gateway-class",
-		ptr.To(int32(20)),
-		ptr.To(int32(30)),
-		ptr.To(int32(80)),
-		ptr.To(metav1.Now()),
+		new(int32(20)),
+		new(int32(30)),
+		new(int32(80)),
+		new(metav1.Now()),
 	)
 	gateway := makeGateway(fmt.Sprintf("%s-gateway", rayService.Name), rayService.Namespace, true)
 
@@ -1892,7 +1892,7 @@ func TestReconcileGateway(t *testing.T) {
 			reconciler := RayServiceReconciler{
 				Client:   fakeClient,
 				Scheme:   newScheme,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			err := reconciler.reconcileGateway(ctx, rayService)
@@ -1954,7 +1954,7 @@ func TestReconcileServeTargetCapacity(t *testing.T) {
 					UpgradeStrategy: &rayv1.RayServiceUpgradeStrategy{
 						Type: ptr.To(rayv1.RayServiceNewClusterWithIncrementalUpgrade),
 						ClusterUpgradeOptions: &rayv1.ClusterUpgradeOptions{
-							MaxSurgePercent: ptr.To(tt.maxSurgePercent),
+							MaxSurgePercent: new(tt.maxSurgePercent),
 						},
 					},
 					ServeConfigV2: `{"target_capacity": 0}`,
@@ -1962,13 +1962,13 @@ func TestReconcileServeTargetCapacity(t *testing.T) {
 				Status: rayv1.RayServiceStatuses{
 					ActiveServiceStatus: rayv1.RayServiceStatus{
 						RayClusterName:       "active",
-						TargetCapacity:       ptr.To(tt.activeCapacity),
-						TrafficRoutedPercent: ptr.To(tt.activeRoutedPercent),
+						TargetCapacity:       new(tt.activeCapacity),
+						TrafficRoutedPercent: new(tt.activeRoutedPercent),
 					},
 					PendingServiceStatus: rayv1.RayServiceStatus{
 						RayClusterName:       "pending",
-						TargetCapacity:       ptr.To(tt.pendingCapacity),
-						TrafficRoutedPercent: ptr.To(tt.pendingRoutedPercent),
+						TargetCapacity:       new(tt.pendingCapacity),
+						TrafficRoutedPercent: new(tt.pendingRoutedPercent),
 					},
 				},
 			}
@@ -2047,7 +2047,7 @@ func makeHTTPRoute(name, namespace string, isReady bool) *gwv1.HTTPRoute {
 					{
 						ParentRef: gwv1.ParentReference{
 							Name:      gwv1.ObjectName("test-rayservice-gateway"),
-							Namespace: ptr.To(gwv1.Namespace(namespace)),
+							Namespace: new(gwv1.Namespace(namespace)),
 						},
 						Conditions: []metav1.Condition{
 							{
@@ -2109,13 +2109,13 @@ func TestCheckIfNeedTargetCapacityUpdate(t *testing.T) {
 			name: "NewClusterWithIncrementalUpgrade is complete",
 			activeStatus: rayv1.RayServiceStatus{
 				RayClusterName:       "active",
-				TargetCapacity:       ptr.To(int32(0)),
-				TrafficRoutedPercent: ptr.To(int32(0)),
+				TargetCapacity:       new(int32(0)),
+				TrafficRoutedPercent: new(int32(0)),
 			},
 			pendingStatus: rayv1.RayServiceStatus{
 				RayClusterName:       "pending",
-				TargetCapacity:       ptr.To(int32(100)),
-				TrafficRoutedPercent: ptr.To(int32(100)),
+				TargetCapacity:       new(int32(100)),
+				TrafficRoutedPercent: new(int32(100)),
 			},
 			runtimeObjects: []runtime.Object{
 				makeGateway(gatewayName, namespace, true), makeHTTPRoute(httpRouteName, namespace, true),
@@ -2127,13 +2127,13 @@ func TestCheckIfNeedTargetCapacityUpdate(t *testing.T) {
 			name: "Pending RayCluster is still incrementally scaling",
 			activeStatus: rayv1.RayServiceStatus{
 				RayClusterName:       "active",
-				TargetCapacity:       ptr.To(int32(70)),
-				TrafficRoutedPercent: ptr.To(int32(70)),
+				TargetCapacity:       new(int32(70)),
+				TrafficRoutedPercent: new(int32(70)),
 			},
 			pendingStatus: rayv1.RayServiceStatus{
 				RayClusterName:       "pending",
-				TargetCapacity:       ptr.To(int32(30)),
-				TrafficRoutedPercent: ptr.To(int32(30)),
+				TargetCapacity:       new(int32(30)),
+				TrafficRoutedPercent: new(int32(30)),
 			},
 			runtimeObjects: []runtime.Object{
 				makeGateway(gatewayName, namespace, true), makeHTTPRoute(httpRouteName, namespace, true),
@@ -2147,13 +2147,13 @@ func TestCheckIfNeedTargetCapacityUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			newScheme := runtime.NewScheme()
 			_ = corev1.AddToScheme(newScheme)
-			_ = gwv1.AddToScheme(newScheme)
+			_ = gwv1.Install(newScheme)
 			fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).WithRuntimeObjects(tt.runtimeObjects...).Build()
 			// Initialize RayService reconciler.
 			ctx := context.TODO()
 			r := RayServiceReconciler{
 				Client:   fakeClient,
-				Recorder: &record.FakeRecorder{},
+				Recorder: &events.FakeRecorder{},
 				Scheme:   scheme.Scheme,
 			}
 			rayService := &rayv1.RayService{
@@ -2198,10 +2198,10 @@ func TestReconcilePerClusterServeService(t *testing.T) {
 	rayService := makeIncrementalUpgradeRayService(
 		true,
 		"istio",
-		ptr.To(int32(20)),
-		ptr.To(int32(30)),
-		ptr.To(int32(80)),
-		ptr.To(metav1.Now()),
+		new(int32(20)),
+		new(int32(30)),
+		new(int32(80)),
+		new(metav1.Now()),
 	)
 
 	// The expected pending RayCluster serve service.
@@ -2259,7 +2259,7 @@ func TestReconcilePerClusterServeService(t *testing.T) {
 			reconciler := RayServiceReconciler{
 				Client:   fakeClient,
 				Scheme:   newScheme,
-				Recorder: record.NewFakeRecorder(1),
+				Recorder: events.NewFakeRecorder(1),
 			}
 
 			err := reconciler.reconcilePerClusterServeService(ctx, rayService, tt.rayCluster)
@@ -2524,7 +2524,7 @@ func TestMarkFailedIfInitializingTimedOut(t *testing.T) {
 
 			ctx := context.TODO()
 			fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).Build()
-			fakeRecorder := record.NewFakeRecorder(10)
+			fakeRecorder := events.NewFakeRecorder(10)
 
 			r := &RayServiceReconciler{
 				Client:   fakeClient,
@@ -2570,6 +2570,95 @@ func TestMarkFailedIfInitializingTimedOut(t *testing.T) {
 	}
 }
 
+// TestHandleSuspendResumeResetsReadyToInitializing verifies that resuming a
+// RayService from the Suspended state resets the RayServiceReady condition
+// back to Reason=Initializing with a fresh LastTransitionTime, so that
+// markFailedOnInitializingTimeout can fire on the resumed attempt.
+func TestHandleSuspendResumeResetsReadyToInitializing(t *testing.T) {
+	newScheme := runtime.NewScheme()
+	_ = rayv1.AddToScheme(newScheme)
+	_ = corev1.AddToScheme(newScheme)
+
+	// Stale timestamp from the suspend transition. If the resume path does
+	// not refresh LastTransitionTime on RayServiceReady, the
+	// initializing-timeout check will compare against this old time and
+	// either fire instantly or never re-arm correctly.
+	suspendTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+
+	rs := &rayv1.RayService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-rayservice",
+			Namespace: "default",
+		},
+		Spec: rayv1.RayServiceSpec{
+			Suspend: false,
+		},
+		Status: rayv1.RayServiceStatuses{
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(rayv1.RayServiceSuspended),
+					Status:             metav1.ConditionTrue,
+					Reason:             string(rayv1.SuspendComplete),
+					LastTransitionTime: suspendTime,
+				},
+				{
+					Type:               string(rayv1.RayServiceSuspending),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(rayv1.SuspendComplete),
+					LastTransitionTime: suspendTime,
+				},
+				{
+					Type:               string(rayv1.RayServiceReady),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(rayv1.SuspendComplete),
+					LastTransitionTime: suspendTime,
+				},
+				{
+					Type:               string(rayv1.UpgradeInProgress),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(rayv1.SuspendComplete),
+					LastTransitionTime: suspendTime,
+				},
+				{
+					Type:               string(rayv1.RollbackInProgress),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(rayv1.SuspendComplete),
+					LastTransitionTime: suspendTime,
+				},
+			},
+		},
+	}
+
+	ctx := context.TODO()
+	fakeClient := clientFake.NewClientBuilder().WithScheme(newScheme).Build()
+	r := &RayServiceReconciler{
+		Client:   fakeClient,
+		Scheme:   scheme.Scheme,
+		Recorder: events.NewFakeRecorder(10),
+	}
+
+	_, err := r.handleSuspend(ctx, rs)
+	require.NoError(t, err)
+
+	readyCond := meta.FindStatusCondition(rs.Status.Conditions, string(rayv1.RayServiceReady))
+	require.NotNil(t, readyCond, "RayServiceReady condition must exist after resume")
+
+	assert.Equal(t, string(rayv1.RayServiceInitializing), readyCond.Reason,
+		"RayServiceReady reason must be Initializing on resume; otherwise initializing-timeout will not fire")
+
+	assert.WithinDuration(t, time.Now(), readyCond.LastTransitionTime.Time, 5*time.Second,
+		"RayServiceReady LastTransitionTime must reset on resume; otherwise initializing-timeout will use the stale suspend timestamp")
+
+	upgradeCond := meta.FindStatusCondition(rs.Status.Conditions, string(rayv1.UpgradeInProgress))
+	require.NotNil(t, upgradeCond, "UpgradeInProgress condition must exist after resume")
+
+	assert.Equal(t, string(rayv1.RayServiceInitializing), upgradeCond.Reason,
+		"UpgradeInProgress reason must be Initializing on resume; otherwise calculateConditions may set it to NoActiveCluster")
+
+	assert.WithinDuration(t, time.Now(), upgradeCond.LastTransitionTime.Time, 5*time.Second,
+		"UpgradeInProgress LastTransitionTime must reset on resume")
+}
+
 func Test_RayServiceReconcileManagedBy(t *testing.T) {
 	newScheme := runtime.NewScheme()
 	_ = rayv1.AddToScheme(newScheme)
@@ -2597,15 +2686,15 @@ func Test_RayServiceReconcileManagedBy(t *testing.T) {
 			shouldReconcile: true,
 		},
 		{
-			managedBy: ptr.To(""),
+			managedBy: new(""),
 			name:      "ManagedBy field empty",
 		},
 		{
-			managedBy: ptr.To(MultiKueueController),
+			managedBy: new(MultiKueueController),
 			name:      "ManagedBy field to external allowed controller",
 		},
 		{
-			managedBy: ptr.To("controller.com/invalid"),
+			managedBy: new("controller.com/invalid"),
 			name:      "ManagedBy field to external not allowed controller",
 		},
 	}
@@ -2647,7 +2736,7 @@ func Test_RayServiceReconcileManagedBy(t *testing.T) {
 
 			testRayServiceReconciler := &RayServiceReconciler{
 				Client:                       fakeClient,
-				Recorder:                     &record.FakeRecorder{},
+				Recorder:                     &events.FakeRecorder{},
 				Scheme:                       newScheme,
 				ServeConfigs:                 lru.New(utils.ServeConfigLRUSize),
 				RayClusterDeletionTimestamps: cmap.New[time.Time](),
@@ -2681,12 +2770,15 @@ func TestReconcileRollbackState(t *testing.T) {
 	baseSpec := rayv1.RayClusterSpec{
 		RayVersion: "2.54.0",
 		WorkerGroupSpecs: []rayv1.WorkerGroupSpec{
-			{GroupName: "worker-group", Replicas: ptr.To(int32(1))},
+			{GroupName: "worker-group", Replicas: new(int32(1))},
 		},
 	}
 
 	updatedSpec := baseSpec.DeepCopy()
 	updatedSpec.RayVersion = "2.50.0"
+
+	thirdSpec := baseSpec.DeepCopy()
+	thirdSpec.RayVersion = "2.56.0"
 
 	baseHash, err := utils.GenerateHashWithoutReplicasAndWorkersToDelete(baseSpec)
 	require.NoError(t, err)
@@ -2704,32 +2796,51 @@ func TestReconcileRollbackState(t *testing.T) {
 	tests := []struct {
 		name                 string
 		rayServiceSpec       rayv1.RayClusterSpec
+		pendingHashOverride  string
 		isRollbackInProgress bool
 		expectRollbackStatus bool
 	}{
 		{
 			name:                 "Normal RayService upgrade, goal matches pending",
 			rayServiceSpec:       *updatedSpec,
+			pendingHashOverride:  updatedHash,
 			isRollbackInProgress: false,
 			expectRollbackStatus: false,
 		},
 		{
 			name:                 "RayService Spec changed, initiate rollback",
 			rayServiceSpec:       baseSpec,
+			pendingHashOverride:  updatedHash,
 			isRollbackInProgress: false,
 			expectRollbackStatus: true,
 		},
 		{
 			name:                 "Rollback in progress, continues rolling back",
 			rayServiceSpec:       baseSpec,
+			pendingHashOverride:  updatedHash,
 			isRollbackInProgress: true,
 			expectRollbackStatus: true,
 		},
 		{
 			name:                 "Rollback canceled, user updated spec back to pending",
 			rayServiceSpec:       *updatedSpec,
+			pendingHashOverride:  updatedHash,
 			isRollbackInProgress: true,
 			expectRollbackStatus: false,
+		},
+		{
+			name:                 "Third-spec scenario: Goal updated to third spec mid-upgrade",
+			rayServiceSpec:       *thirdSpec,
+			pendingHashOverride:  updatedHash,
+			isRollbackInProgress: false,
+			expectRollbackStatus: true,
+		},
+		{
+			name:                 "Fast rollback: Goal matches active, but pending already updated to match active",
+			rayServiceSpec:       baseSpec,
+			pendingHashOverride:  baseHash,
+			isRollbackInProgress: false,
+			expectRollbackStatus: true,
 		},
 	}
 
@@ -2746,14 +2857,17 @@ func TestReconcileRollbackState(t *testing.T) {
 			}
 
 			if tt.isRollbackInProgress {
-				setCondition(rayService, rayv1.RollbackInProgress, metav1.ConditionTrue, rayv1.TargetClusterChanged, "rolling back")
+				setCondition(rayService, rayv1.RollbackInProgress, metav1.ConditionTrue, rayv1.DesiredClusterSpecChanged, "rolling back")
 			}
+
+			testPendingCluster := pendingCluster.DeepCopy()
+			testPendingCluster.Annotations[utils.HashWithoutReplicasAndWorkersToDeleteKey] = tt.pendingHashOverride
 
 			reconciler := RayServiceReconciler{
-				Recorder: record.NewFakeRecorder(1),
+				Recorder: events.NewFakeRecorder(1),
 			}
 
-			err := reconciler.reconcileRollbackState(ctx, rayService, activeCluster, pendingCluster)
+			err := reconciler.reconcileRollbackState(ctx, rayService, activeCluster, testPendingCluster)
 			require.NoError(t, err)
 
 			isCurrentlyRollingBack := meta.IsStatusConditionTrue(rayService.Status.Conditions, string(rayv1.RollbackInProgress))
@@ -2762,74 +2876,222 @@ func TestReconcileRollbackState(t *testing.T) {
 	}
 }
 
-// TestShouldUpdateCluster_SuspendFlip covers ray-project/kuberay#4686: when Kueue
-// toggles RayService.Spec.RayClusterSpec.Suspend, the existing RayCluster must be
-// updated in-place. Previously shouldUpdateCluster returned false because the
-// cluster hash annotation encodes the old Suspend value, leaving the cluster
-// stuck suspended with no head pod.
-func TestShouldUpdateCluster_SuspendFlip(t *testing.T) {
-	namespace := "test-namespace"
-
-	newRayService := func(suspend *bool) *rayv1.RayService {
-		return &rayv1.RayService{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-service",
-				Namespace: namespace,
-			},
-			Spec: rayv1.RayServiceSpec{
-				RayClusterSpec: rayv1.RayClusterSpec{
-					RayVersion: "2.9.0",
-					Suspend:    suspend,
+// headReadyCluster is a helper to construct a RayCluster with a specific HeadPodReady condition.
+func headReadyCluster(ready bool) *rayv1.RayCluster {
+	status := metav1.ConditionFalse
+	if ready {
+		status = metav1.ConditionTrue
+	}
+	return &rayv1.RayCluster{
+		Status: rayv1.RayClusterStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   string(rayv1.HeadPodReady),
+					Status: status,
 				},
 			},
-		}
+		},
 	}
+}
 
-	// newClusterFrom mirrors the annotation layout produced by
-	// constructRayClusterForRayService so the hash reflects the cluster's
-	// actual spec (including its Suspend value).
-	newClusterFrom := func(t *testing.T, service *rayv1.RayService, suspend *bool) *rayv1.RayCluster {
-		t.Helper()
-		clusterSpec := service.Spec.RayClusterSpec.DeepCopy()
-		clusterSpec.Suspend = suspend
-		hash, err := utils.GenerateHashWithoutReplicasAndWorkersToDelete(*clusterSpec)
-		require.NoError(t, err)
-		return &rayv1.RayCluster{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-cluster",
-				Namespace: namespace,
-				Annotations: map[string]string{
-					utils.HashWithoutReplicasAndWorkersToDeleteKey: hash,
-					utils.NumWorkerGroupsKey:                       strconv.Itoa(len(clusterSpec.WorkerGroupSpecs)),
-					utils.KubeRayVersion:                           utils.KUBERAY_VERSION,
-				},
-			},
-			Spec: *clusterSpec,
-		}
-	}
-
+func TestShouldCompleteIncrementalRollback(t *testing.T) {
 	tests := []struct {
-		name            string
-		serviceSuspend  *bool
-		clusterSuspend  *bool
-		isActiveCluster bool
-		expect          bool
+		name           string
+		activeTC       int32
+		activeTRP      int32
+		pendingTC      int32
+		pendingTRP     int32
+		pendingCluster *rayv1.RayCluster
+		want           bool
 	}{
-		{"pending unsuspended by Kueue: true -> false", ptr.To(false), ptr.To(true), false, true},
-		{"pending suspended by Kueue: false -> true", ptr.To(true), ptr.To(false), false, true},
-		{"active unsuspended by Kueue: true -> false", ptr.To(false), ptr.To(true), true, true},
-		{"active suspended by Kueue: false -> true", ptr.To(true), ptr.To(false), true, true},
-		{"no change, both nil", nil, nil, false, false},
-		{"no change, both false", ptr.To(false), ptr.To(false), false, false},
-		{"no change, both true", ptr.To(true), ptr.To(true), false, false},
-		{"nil vs false treated equal", nil, ptr.To(false), false, false},
+		{
+			name:           "healthy pending at zero capacity and traffic — complete",
+			activeTC:       100,
+			activeTRP:      100,
+			pendingTC:      0,
+			pendingTRP:     0,
+			pendingCluster: headReadyCluster(true),
+			want:           true,
+		},
+		{
+			name:           "unhealthy pending with leftover capacity — bypass complete",
+			activeTC:       100,
+			activeTRP:      100,
+			pendingTC:      30,
+			pendingTRP:     0,
+			pendingCluster: headReadyCluster(false),
+			want:           true,
+		},
+		{
+			name:           "no pending RayCluster — complete when active is full",
+			activeTC:       100,
+			activeTRP:      100,
+			pendingTC:      0,
+			pendingTRP:     0,
+			pendingCluster: nil,
+			want:           true,
+		},
+		{
+			name:           "healthy pending still holding target capacity — not complete",
+			activeTC:       100,
+			activeTRP:      100,
+			pendingTC:      50,
+			pendingTRP:     0,
+			pendingCluster: headReadyCluster(true),
+			want:           false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := newRayService(tt.serviceSuspend)
-			cluster := newClusterFrom(t, service, tt.clusterSuspend)
-			assert.Equal(t, tt.expect, shouldUpdateCluster(service, cluster, tt.isActiveCluster))
+			activeStatus := &rayv1.RayServiceStatus{
+				TargetCapacity:       new(tt.activeTC),
+				TrafficRoutedPercent: new(tt.activeTRP),
+			}
+			pendingStatus := &rayv1.RayServiceStatus{
+				TargetCapacity:       new(tt.pendingTC),
+				TrafficRoutedPercent: new(tt.pendingTRP),
+			}
+
+			got := shouldCompleteIncrementalRollback(activeStatus, pendingStatus, tt.pendingCluster)
+			if got != tt.want {
+				t.Errorf("shouldCompleteIncrementalRollback() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReconcileServe_SkipConfigUpdateDuringRollback(t *testing.T) {
+	features.SetFeatureGateDuringTest(t, features.RayClusterStatusConditions, true)
+	features.SetFeatureGateDuringTest(t, features.RayServiceIncrementalUpgrade, true)
+	ctx := context.TODO()
+	namespace := "test-ns"
+
+	activeCluster := &rayv1.RayCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "active-cluster", Namespace: namespace},
+		Status: rayv1.RayClusterStatus{
+			Conditions: []metav1.Condition{
+				{Type: string(rayv1.HeadPodReady), Status: metav1.ConditionTrue},
+			},
+		},
+	}
+
+	pendingCluster := &rayv1.RayCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-cluster", Namespace: namespace},
+		Status: rayv1.RayClusterStatus{
+			Conditions: []metav1.Condition{
+				{Type: string(rayv1.HeadPodReady), Status: metav1.ConditionTrue},
+			},
+		},
+	}
+
+	activeServiceName, _ := utils.GenerateHeadServiceName(utils.RayClusterCRD, rayv1.RayClusterSpec{}, "active-cluster")
+	activeService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: activeServiceName, Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Name: utils.DashboardPortName, Port: 8265}},
+		},
+	}
+
+	pendingServiceName, _ := utils.GenerateHeadServiceName(utils.RayClusterCRD, rayv1.RayClusterSpec{}, "pending-cluster")
+	pendingService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: pendingServiceName, Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Name: utils.DashboardPortName, Port: 8265}},
+		},
+	}
+
+	tests := []struct {
+		name            string
+		clusterInstance *rayv1.RayCluster
+		isRollback      bool
+		isActiveCluster bool
+		expectUpdate    bool
+	}{
+		{
+			name:            "Active cluster during rollback -> should update",
+			clusterInstance: activeCluster,
+			isRollback:      true,
+			isActiveCluster: true,
+			expectUpdate:    true,
+		},
+		{
+			name:            "Pending cluster during rollback -> should skip update",
+			clusterInstance: pendingCluster,
+			isRollback:      true,
+			isActiveCluster: false,
+			expectUpdate:    false,
+		},
+		{
+			name:            "Pending cluster during upgrade (no rollback) -> should update",
+			clusterInstance: pendingCluster,
+			isRollback:      false,
+			isActiveCluster: false,
+			expectUpdate:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newScheme := runtime.NewScheme()
+			_ = rayv1.AddToScheme(newScheme)
+			_ = corev1.AddToScheme(newScheme)
+
+			fakeClient := clientFake.NewClientBuilder().
+				WithScheme(newScheme).
+				WithRuntimeObjects(activeCluster, pendingCluster, activeService, pendingService).
+				Build()
+
+			fakeDashboardClient := &utils.FakeRayDashboardClient{}
+			fakeDashboardClient.SetMultiApplicationStatuses(map[string]*utiltypes.ServeApplicationStatus{
+				"app1": {Status: rayv1.ApplicationStatusEnum.RUNNING},
+			})
+
+			reconciler := &RayServiceReconciler{
+				Client:   fakeClient,
+				Recorder: &events.FakeRecorder{},
+				dashboardClientFunc: func(_ *rayv1.RayCluster, _ string) (dashboardclient.RayDashboardClientInterface, error) {
+					return fakeDashboardClient, nil
+				},
+				ServeConfigs: lru.New(10),
+			}
+
+			rayService := &rayv1.RayService{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-rayservice", Namespace: namespace},
+				Spec: rayv1.RayServiceSpec{
+					UpgradeStrategy: &rayv1.RayServiceUpgradeStrategy{
+						Type: ptr.To(rayv1.RayServiceNewClusterWithIncrementalUpgrade),
+					},
+					ServeConfigV2: `{"key": "new-config"}`,
+				},
+				Status: rayv1.RayServiceStatuses{
+					ActiveServiceStatus: rayv1.RayServiceStatus{
+						RayClusterName: "active-cluster",
+					},
+					PendingServiceStatus: rayv1.RayServiceStatus{
+						RayClusterName: "pending-cluster",
+					},
+				},
+			}
+
+			if tt.isRollback {
+				setCondition(rayService, rayv1.RollbackInProgress, metav1.ConditionTrue, rayv1.DesiredClusterSpecChanged, "rolling back")
+				setCondition(rayService, rayv1.UpgradeInProgress, metav1.ConditionTrue, rayv1.DesiredClusterSpecChanged, "upgrade still in progress during rollback")
+			} else {
+				setCondition(rayService, rayv1.UpgradeInProgress, metav1.ConditionTrue, rayv1.DesiredClusterSpecChanged, "upgrading")
+			}
+
+			// Run reconcileServe
+			_, _, err := reconciler.reconcileServe(ctx, rayService, tt.clusterInstance)
+			require.NoError(t, err)
+
+			// Check if UpdateDeployments was called
+			if tt.expectUpdate {
+				assert.NotNil(t, fakeDashboardClient.LastUpdatedConfig)
+				assert.Contains(t, string(fakeDashboardClient.LastUpdatedConfig), "new-config")
+			} else {
+				assert.Nil(t, fakeDashboardClient.LastUpdatedConfig)
+			}
 		})
 	}
 }
@@ -2867,7 +3129,7 @@ func TestRayServiceFinalizer(t *testing.T) {
 			rayService: &rayv1.RayService{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-rayservice", Namespace: namespace},
 				Spec: rayv1.RayServiceSpec{
-					ManagedBy: ptr.To("kueue.x-k8s.io/multikueue"),
+					ManagedBy: new("kueue.x-k8s.io/multikueue"),
 				},
 			},
 			validate: func(t *testing.T, fakeClient client.Client, namespacedName types.NamespacedName) {
@@ -2939,7 +3201,7 @@ func TestRayServiceFinalizer(t *testing.T) {
 
 			reconciler := &RayServiceReconciler{
 				Client:                       fakeClient,
-				Recorder:                     &record.FakeRecorder{},
+				Recorder:                     &events.FakeRecorder{},
 				Scheme:                       newScheme,
 				ServeConfigs:                 lru.New(10),
 				RayClusterDeletionTimestamps: cmap.New[time.Time](),
@@ -2953,4 +3215,57 @@ func TestRayServiceFinalizer(t *testing.T) {
 			tt.validate(t, fakeClient, namespacedName)
 		})
 	}
+}
+
+func TestHandleSuspendObservedGeneration(t *testing.T) {
+	ctx := context.Background()
+	reconciler := &RayServiceReconciler{}
+
+	t.Run("entering Suspending bumps observedGeneration on conditions", func(t *testing.T) {
+		rayService := &rayv1.RayService{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "rayservice",
+				Namespace:  "default",
+				Generation: 5,
+			},
+			Spec: rayv1.RayServiceSpec{Suspend: true},
+			Status: rayv1.RayServiceStatuses{
+				ObservedGeneration: 2,
+			},
+		}
+
+		_, err := reconciler.handleSuspend(ctx, rayService)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), rayService.Status.ObservedGeneration)
+
+		suspending := meta.FindStatusCondition(rayService.Status.Conditions, string(rayv1.RayServiceSuspending))
+		require.NotNil(t, suspending)
+		assert.Equal(t, metav1.ConditionTrue, suspending.Status)
+		assert.Equal(t, int64(5), suspending.ObservedGeneration)
+	})
+
+	t.Run("idle Suspended does not bump observedGeneration", func(t *testing.T) {
+		rayService := &rayv1.RayService{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "rayservice",
+				Namespace:  "default",
+				Generation: 9,
+			},
+			Spec: rayv1.RayServiceSpec{Suspend: true},
+			Status: rayv1.RayServiceStatuses{
+				ObservedGeneration: 4,
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(rayv1.RayServiceSuspended),
+						Status: metav1.ConditionTrue,
+						Reason: string(rayv1.SuspendComplete),
+					},
+				},
+			},
+		}
+
+		_, err := reconciler.handleSuspend(ctx, rayService)
+		require.NoError(t, err)
+		assert.Equal(t, int64(4), rayService.Status.ObservedGeneration)
+	})
 }
