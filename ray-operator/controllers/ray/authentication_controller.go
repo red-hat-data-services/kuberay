@@ -461,7 +461,8 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 		weight := int32(1)
 		pathExact := gatewayv1.PathMatchExact
 		pathPrefix := gatewayv1.PathMatchPathPrefix
-		port := gatewayv1.PortNumber(8265)
+		port := utils.EffectiveRayStartParamPort(
+			cluster.Spec.HeadGroupSpec.RayStartParams, "dashboard-port", utils.DefaultDashboardPort)
 		pathValue := "/"
 		prefixValue := fmt.Sprintf("/ray/%s/%s", cluster.Namespace, cluster.Name)
 
@@ -936,7 +937,8 @@ func GetOIDCProxySidecar(cluster *rayv1.RayCluster, tlsArgs []string) corev1.Con
 		},
 		Args: append([]string{
 			fmt.Sprintf("--secure-listen-address=0.0.0.0:%d", authProxyPort),
-			"--upstream=http://127.0.0.1:8265/",
+			fmt.Sprintf("--upstream=http://127.0.0.1:%d/", utils.EffectiveRayStartParamPort(
+				cluster.Spec.HeadGroupSpec.RayStartParams, "dashboard-port", utils.DefaultDashboardPort)),
 			"--config-file=/etc/kube-rbac-proxy/config.yaml",
 			"--logtostderr=true",
 		}, tlsArgs...),

@@ -455,6 +455,36 @@ func TestBuildHeadNetworkPolicy_CustomIngressRules(t *testing.T) {
 	assert.Equal(t, &customPort, policy.Spec.Ingress[1].Ports[0].Port)
 }
 
+func TestBuildHeadNetworkPolicyManagedOpenShiftReplacesStalePlatformPortRules(t *testing.T) {
+	setupNetworkPolicyTest(t)
+	testNetworkPolicyController.isOpenShift = true
+
+	cluster := testRayClusterBasic.DeepCopy()
+	cluster.Annotations = map[string]string{utils.EnableSecureTrustedNetworkAnnotationKey: "true"}
+	cluster.Spec.NetworkPolicy = nil
+	cluster.Spec.HeadGroupSpec.RayStartParams = map[string]string{"dashboard-port": "9365"}
+	utils.EnsureOpenShiftRayClusterNetworkPolicy(cluster)
+	oldRules := cluster.Spec.NetworkPolicy.Head.IngressRules
+
+	cluster.Spec.HeadGroupSpec.RayStartParams["dashboard-port"] = "9465"
+	policy := testNetworkPolicyController.buildHeadNetworkPolicy(cluster, rayv1.NetworkPolicyDenyAllIngress)
+
+	assert.NotEqual(t, oldRules, policy.Spec.Ingress, "the generated policy should not copy platform rules from the CR")
+	assert.True(t, policyContainsPort(policy.Spec.Ingress, 9465))
+	assert.False(t, policyContainsPort(policy.Spec.Ingress, 9365))
+}
+
+func policyContainsPort(rules []networkingv1.NetworkPolicyIngressRule, want int32) bool {
+	for _, rule := range rules {
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.Type == intstr.Int && port.Port.IntVal == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // TestBuildHeadNetworkPolicy_CustomEgressRules verifies that custom Head.EgressRules are appended after base egress.
 func TestBuildHeadNetworkPolicy_CustomEgressRules(t *testing.T) {
 	setupNetworkPolicyTest(t)
