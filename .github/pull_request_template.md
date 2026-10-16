@@ -10,6 +10,13 @@
 
 <!-- For example: "Closes #1234" -->
 
+## Labels
+
+<!-- Please add the appropriate labels to this PR. -->
+
+- [ ] If this PR has user-facing changes that require documentation updates at release time, I have added the `doc-updates-required` label.
+- [ ] If this PR contains breaking changes, I have added the `breaking-change` label.
+
 ## Checks
 
 - [ ] I've made sure the tests are passing.

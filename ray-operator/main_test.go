@@ -32,7 +32,7 @@ kind: Configuration
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
 				QPS:                  ptr.To(configapi.DefaultQPS),
 				Burst:                ptr.To(configapi.DefaultBurst),
@@ -55,7 +55,7 @@ reconcileConcurrency: 1
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
 				QPS:                  ptr.To(configapi.DefaultQPS),
 				Burst:                ptr.To(configapi.DefaultBurst),
@@ -84,7 +84,7 @@ workerSidecarContainers:
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
 				HeadSidecarContainers: []corev1.Container{
 					{
@@ -97,6 +97,43 @@ workerSidecarContainers:
 						Name:  "fluentbit",
 						Image: "fluent/fluent-bit:1.9.6",
 					},
+				},
+				QPS:   ptr.To(configapi.DefaultQPS),
+				Burst: ptr.To(configapi.DefaultBurst),
+			},
+			expectErr: false,
+		},
+		{
+			name: "config with default pod metadata",
+			configData: `apiVersion: config.ray.io/v1alpha1
+kind: Configuration
+metricsAddr: ":8080"
+probeAddr: ":8082"
+enableLeaderElection: true
+reconcileConcurrency: 1
+defaultPodAnnotations:
+  monitoring.example.com/scrape: "true"
+  monitoring.example.com/port: "8080"
+defaultPodLabels:
+  app.kubernetes.io/managed-by: kuberay
+  team: platform
+`,
+			expectedConfig: configapi.Configuration{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "Configuration",
+					APIVersion: "config.ray.io/v1alpha1",
+				},
+				MetricsAddr:          ":8080",
+				ProbeAddr:            ":8082",
+				EnableLeaderElection: new(true),
+				ReconcileConcurrency: 1,
+				DefaultPodAnnotations: map[string]string{
+					"monitoring.example.com/scrape": "true",
+					"monitoring.example.com/port":   "8080",
+				},
+				DefaultPodLabels: map[string]string{
+					"app.kubernetes.io/managed-by": "kuberay",
+					"team":                         "platform",
 				},
 				QPS:   ptr.To(configapi.DefaultQPS),
 				Burst: ptr.To(configapi.DefaultBurst),
@@ -120,7 +157,7 @@ unknownfield: 1
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
 				QPS:                  ptr.To(configapi.DefaultQPS),
 				Burst:                ptr.To(configapi.DefaultBurst),
@@ -145,10 +182,10 @@ burst: 300
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
-				QPS:                  ptr.To(150.5),
-				Burst:                ptr.To(300),
+				QPS:                  new(150.5),
+				Burst:                new(300),
 			},
 			expectErr: false,
 		},
@@ -170,10 +207,10 @@ burst: 300.5
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 1,
-				QPS:                  ptr.To(150.0),
-				Burst:                ptr.To(300),
+				QPS:                  new(150.0),
+				Burst:                new(300),
 			},
 			expectErr:   true,
 			errContains: "json: cannot unmarshal number 300.5 into Go struct field Configuration.burst of type int",
@@ -194,7 +231,7 @@ reconcileConcurrency: true
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 0,
 				QPS:                  ptr.To(configapi.DefaultQPS),
 				Burst:                ptr.To(configapi.DefaultBurst),
@@ -218,7 +255,7 @@ reconcileConcurrency: 100
 				},
 				MetricsAddr:          ":8080",
 				ProbeAddr:            ":8082",
-				EnableLeaderElection: ptr.To(true),
+				EnableLeaderElection: new(true),
 				ReconcileConcurrency: 100,
 				QPS:                  ptr.To(configapi.DefaultQPS),
 				Burst:                ptr.To(configapi.DefaultBurst),
