@@ -48,22 +48,23 @@ kind load docker-image historyserver:v0.1.0
 kind load docker-image collector:v0.1.0
 ```
 
-### 5. Deploy Ray Cluster
+### 5. Submit Ray Job
 
-```bash
-kubectl apply -f historyserver/config/raycluster.yaml
-```
-
-### 6. Submit Ray Job
+The RayJob creates its own Ray cluster with the collector sidecar and shuts it down
+after the job finishes (`shutdownAfterJobFinishes` with a 30s TTL).
 
 ```bash
 kubectl apply -f historyserver/config/rayjob.yaml
+kubectl wait rayjob/rayjob-historyserver --for=jsonpath='{.status.jobStatus}=SUCCEEDED' --timeout=5m
 ```
 
-### 7. Delete Ray Cluster (Trigger Log Upload)
+### 6. Wait for Cluster Shutdown (Trigger Log Upload)
+
+The cluster shuts down automatically 30s after the job finishes, which flushes logs and
+events to storage. To skip the TTL wait, delete the RayJob:
 
 ```bash
-kubectl delete -f historyserver/config/raycluster.yaml
+kubectl delete -f historyserver/config/rayjob.yaml
 ```
 
 ### 8. Create Service Account
@@ -83,6 +84,11 @@ kubectl apply -f historyserver/config/historyserver.yaml
 kubectl port-forward svc/historyserver 8080:30080
 ```
 
+> [!IMPORTANT]
+> Access to live RayClusters is disabled by default. When disabled, `/clusters` only lists sessions
+> already flushed to storage, and `/enter_cluster/.../live` returns 404. To enable access to live
+> RayCluster, set `--enable-live-clusters=true`.
+
 #### Run History Server Outside the Kind Cluster
 
 You can also run the history server outside the Kind cluster to accelerate the development iteration and enable
@@ -99,17 +105,16 @@ debugging in your own IDE. For example, you can set up `.vscode/launch.json` as 
             "program": "${workspaceFolder}/historyserver/cmd/historyserver/main.go",
             "cwd": "${workspaceFolder}",
             "args": [
-                "--runtime-class-name=s3",
-                "--ray-root-dir=log"
+                "--storage-backend=s3",
+                "--enable-live-clusters=true",
             ],
             "env": {
                 "S3_REGION": "test",
-                // Use localhost rather than the Kubernetes service name.
                 "S3_ENDPOINT": "localhost:9000",
                 "S3_BUCKET": "ray-historyserver",
-                "AWS_S3ID": "minioadmin",
-                "AWS_S3SECRET": "minioadmin",
-                "AWS_S3TOKEN": "",
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
+                "AWS_SESSION_TOKEN": "",
                 "S3FORCE_PATH_STYLE": "true",
                 "S3DISABLE_SSL": "true"
             }
@@ -132,20 +137,18 @@ make buildhistoryserver
 export S3_REGION=test
 export S3_ENDPOINT=localhost:9000
 export S3_BUCKET=ray-historyserver
-export AWS_S3ID=minioadmin
-export AWS_S3SECRET=minioadmin
-export AWS_S3TOKEN=
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_SESSION_TOKEN=
 export S3FORCE_PATH_STYLE=true
 export S3DISABLE_SSL=true
 
 # Run the history server.
 ./output/bin/historyserver \
-  --runtime-class-name=s3 \
-  --ray-root-dir=log \
-  --use-kubernetes-proxy=true
+  --storage-backend=s3 \
+  --use-kubernetes-proxy=true \
+  --enable-live-clusters=true
 ```
-
----
 
 ## API Endpoints
 
@@ -166,7 +169,7 @@ curl "http://localhost:8080/clusters"
 
 ```bash
 SESSION="session_2026-01-11_19-38-40_146706_1"  # Replace with actual session
-curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/raycluster-historyserver/$SESSION"
+curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/rayjob/rayjob-historyserver/$SESSION"
 ```
 
 ### Dead Cluster Endpoints
@@ -195,21 +198,17 @@ curl -b ~/cookies.txt "http://localhost:8080/nodes?view=summary"
 
 ```bash
 SESSION="live"
-curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/raycluster-historyserver/$SESSION"
+curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/rayjob/rayjob-historyserver/$SESSION"
 ```
 
-If the command returns a "RayCluster not found" error, you need to deploy a new, live cluster before connecting:
+If the command returns a "RayCluster not found" error, you need a live cluster before
+connecting. Re-submit the sample RayJob — its cluster stays alive for the 30s TTL after
+the job finishes:
 
 ```bash
-kubectl apply -f historyserver/config/raycluster.yaml
-```
-
-Then submit a new RayJob:
-
-```sh
 kubectl apply -f historyserver/config/rayjob.yaml
 
-# If rayjob already exists, please delete it first and re-apply
+# If the RayJob already exists, please delete it first and re-apply
 # kubectl delete -f historyserver/config/rayjob.yaml
 ```
 
@@ -253,7 +252,7 @@ curl -b ~/cookies.txt "http://localhost:8080/api/cluster_status"
 kubectl apply -f ray-operator/config/samples/ray-cluster.embed-grafana.yaml
 
 # Get live session cookie. (Port-forward is required)
-curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/raycluster-embed-grafana/live"
+curl -c ~/cookies.txt "http://localhost:8080/enter_cluster/default/raycluster/raycluster-embed-grafana/live"
 
 # Request to prometheus health endpoint
 curl -b ~/cookies.txt http://localhost:8080/api/prometheus_health

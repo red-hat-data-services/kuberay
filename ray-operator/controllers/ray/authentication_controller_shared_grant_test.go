@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -92,7 +92,7 @@ func TestCleanupReferenceGrantWithMixedClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -137,7 +137,7 @@ func TestCleanupReferenceGrantNotFound(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -206,7 +206,7 @@ func TestCleanupReferenceGrantWithDifferentAuthModes(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -263,7 +263,7 @@ func TestReferenceGrantIdempotency(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -368,7 +368,7 @@ func TestCleanupReferenceGrantOnlyCountsAuthEnabledClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -423,7 +423,7 @@ func TestReferenceGrantDifferentNamespaces(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -502,7 +502,7 @@ func TestCleanupReferenceGrantAllClustersWithoutAuth(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -546,7 +546,7 @@ func TestEnsureReferenceGrantLabels(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -641,7 +641,7 @@ func TestCleanupOldHTTPRouteFromClusterNamespace(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -708,7 +708,7 @@ func TestCleanupOldHTTPRouteMigrationOnly(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -765,7 +765,7 @@ func TestMultipleNamespacesWithSharedGrants(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
