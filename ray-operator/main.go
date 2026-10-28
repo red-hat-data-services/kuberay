@@ -48,6 +48,8 @@ var (
 	scheme    = runtime.NewScheme()
 	setupLog  = ctrl.Log.WithName("setup")
 	userAgent = fmt.Sprintf("kuberay-operator/%s", utils.KUBERAY_VERSION)
+	buildTime = "unknown" // ODH/RHOAI carry: for debug
+	commitID  = "unknown" // ODH/RHOAI carry: for debug
 )
 
 func init() {
@@ -429,7 +431,7 @@ func main() {
 	exitOnError(mgr.AddHealthzCheck("healthz", healthz.Ping), "unable to set up health check")
 	exitOnError(mgr.AddReadyzCheck("readyz", healthz.Ping), "unable to set up ready check")
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager", "version", utils.KUBERAY_VERSION, "gitSHA", commitID, "buildTime", buildTime)
 	if err := mgr.Start(ctx); err != nil {
 		cancel()
 		exitOnError(err, "problem running manager")
