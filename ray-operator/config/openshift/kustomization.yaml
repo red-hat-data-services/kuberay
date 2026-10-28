@@ -37,6 +37,7 @@ vars:
 resources:
 - ray_operator_scc.yaml
 - ../default
+- ../network-policy
 - webhook.yaml
 - certmanager.yaml
 - rbac/tls
