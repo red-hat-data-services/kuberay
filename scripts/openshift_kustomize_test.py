@@ -57,3 +57,64 @@ def test_kuberay_operator_selector_preserves_rhoai_351_labels():
 
     assert deployment["spec"]["selector"]["matchLabels"] == expected_labels
     assert deployment["spec"]["template"]["metadata"]["labels"] == expected_labels
+
+
+def test_kuberay_operator_service_uses_https_metrics_port():
+    """OpenShift overlay must not advertise stale HTTP metrics on 8080 (RHOAIENG-102096)."""
+    service = next(
+        obj
+        for obj in render_openshift_overlay()
+        if obj.get("kind") == "Service"
+        and obj.get("metadata", {}).get("name") == "kuberay-operator"
+    )
+
+    annotations = service["metadata"].get("annotations", {})
+    assert annotations.get("prometheus.io/port") == "8443"
+    assert annotations.get("prometheus.io/scheme") == "https"
+    assert annotations.get("prometheus.io/scrape") == "true"
+
+    port_names = {port["name"]: port for port in service["spec"]["ports"]}
+    assert "monitoring-port" not in port_names
+    assert port_names["https"]["port"] == 8443
+    assert port_names["https"]["targetPort"] == 8443
+
+
+def test_kuberay_operator_metrics_networkpolicy_present():
+    """Operator metrics NetworkPolicy must ship in the OpenShift overlay (RHOAIENG-96339 / 102096)."""
+    policy = next(
+        obj
+        for obj in render_openshift_overlay()
+        if obj.get("kind") == "NetworkPolicy"
+        and obj.get("metadata", {}).get("name") == "kuberay-operator-allow-metrics-traffic"
+    )
+
+    assert policy["spec"]["policyTypes"] == ["Ingress"]
+    ingress = policy["spec"]["ingress"]
+
+    metrics_rule = next(
+        rule
+        for rule in ingress
+        if any(
+            port.get("port") == 8443 and port.get("protocol") == "TCP"
+            for port in rule.get("ports", [])
+        )
+    )
+    monitoring_namespaces = {
+        selector["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+        for selector in metrics_rule.get("from", [])
+        if "namespaceSelector" in selector
+    }
+    assert monitoring_namespaces == {
+        "openshift-monitoring",
+        "openshift-user-workload-monitoring",
+        "redhat-ods-monitoring",
+    }
+
+    health_ports = {
+        port["port"]
+        for rule in ingress
+        if "from" not in rule
+        for port in rule.get("ports", [])
+    }
+    assert 8082 in health_ports
+    assert 9443 in health_ports
