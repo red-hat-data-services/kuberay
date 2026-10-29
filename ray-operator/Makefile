@@ -121,8 +121,8 @@ build: fmt vet ## Build manager binary.
 	go build                                    \
     -ldflags                                    \
     "                                           \
-    -X 'main._buildTime_=${BUILD_TIME}'         \
-    -X 'main._commitId_=${COMMIT_SHA1}'         \
+    -X 'main.buildTime=${BUILD_TIME}'           \
+    -X 'main.commitID=${COMMIT_SHA1}'           \
     "                                           \
     -o bin/manager main.go
 
