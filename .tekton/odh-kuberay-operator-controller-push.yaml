@@ -28,6 +28,9 @@ spec:
     value: quay.io/opendatahub/kuberay-operator:odh-stable
   - name: dockerfile
     value: Dockerfile.rhoai
+  - name: build-args
+    value:
+    - COMMIT_SHA1={{revision}}
   - name: path-context
     value: ray-operator
   pipelineRef:
