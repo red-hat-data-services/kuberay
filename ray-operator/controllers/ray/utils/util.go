@@ -44,6 +44,19 @@ const (
 	ContainersNotReady  = "ContainersNotReady"
 )
 
+// EffectiveRayStartParamPort returns a valid TCP port from RayStartParams or
+// the supplied default. OpenShift policy, Gateway, and authentication
+// integration should use this helper so those paths follow the same effective
+// port.
+func EffectiveRayStartParamPort(params map[string]string, key string, defaultPort int32) int32 {
+	if value, ok := params[key]; ok {
+		if port, err := strconv.ParseInt(value, 10, 32); err == nil && port > 0 && port <= 65535 {
+			return int32(port)
+		}
+	}
+	return defaultPort
+}
+
 // TODO (kevin85421): Define CRDType here rather than constant.go to avoid circular dependency.
 type CRDType string
 

@@ -698,6 +698,9 @@ func TestGetOIDCProxySidecar(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "default",
 		},
+		Spec: rayv1.RayClusterSpec{HeadGroupSpec: rayv1.HeadGroupSpec{
+			RayStartParams: map[string]string{"dashboard-port": "9365"},
+		}},
 	}
 
 	container := GetOIDCProxySidecar(cluster, []string{"--tls-min-version=VersionTLS12"})
@@ -712,7 +715,7 @@ func TestGetOIDCProxySidecar(t *testing.T) {
 	assert.Equal(t, int32(authProxyPort), container.Ports[0].ContainerPort)
 	assert.Equal(t, oidcProxyPortName, container.Ports[0].Name)
 	assert.Contains(t, container.Args, "--secure-listen-address=0.0.0.0:8443")
-	assert.Contains(t, container.Args, "--upstream=http://127.0.0.1:8265/")
+	assert.Contains(t, container.Args, "--upstream=http://127.0.0.1:9365/")
 	assert.Contains(t, container.Args, "--tls-min-version=VersionTLS12")
 
 	// Verify volume mount
