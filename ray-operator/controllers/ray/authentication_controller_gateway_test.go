@@ -256,6 +256,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 		},
 		Spec: rayv1.RayClusterSpec{
 			HeadGroupSpec: rayv1.HeadGroupSpec{
+				RayStartParams: map[string]string{"dashboard-port": "9365"},
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
@@ -322,7 +323,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 	assert.Equal(t, "test-cluster-head-svc", string(backendRef.Name), "Backend should reference head service")
 	assert.NotNil(t, backendRef.Namespace, "Backend should have namespace set")
 	assert.Equal(t, "user-namespace", string(*backendRef.Namespace), "Backend should reference user namespace")
-	assert.Equal(t, int32(8265), *backendRef.Port, "Backend should reference port 8265")
+	assert.Equal(t, int32(9365), *backendRef.Port, "Backend should reference the configured dashboard port")
 }
 
 func TestCleanupOIDCResourcesWithCrossNamespace(t *testing.T) {

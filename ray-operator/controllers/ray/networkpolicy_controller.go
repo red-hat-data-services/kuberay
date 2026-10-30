@@ -251,8 +251,16 @@ func (r *NetworkPolicyController) buildHeadNetworkPolicy(instance *rayv1.RayClus
 	if mode == rayv1.NetworkPolicyDenyAll || mode == rayv1.NetworkPolicyDenyAllIngress {
 		policyTypes = append(policyTypes, networkingv1.PolicyTypeIngress)
 		ingressRules = r.buildHeadIngressRules(instance)
-		if instance.Spec.NetworkPolicy.Head != nil {
-			ingressRules = append(ingressRules, instance.Spec.NetworkPolicy.Head.IngressRules...)
+		if r.isOpenShift && utils.IsLegacySecurityEnabled(instance) {
+			ingressRules = appendUniqueIngressRules(ingressRules, r.buildOpenShiftPlatformIngressRules(instance)...)
+		}
+		// Managed OpenShift head rules are regenerated from the current platform
+		// contract above. Do not append the copy retained in the CR: it may contain
+		// platform rules for an older dashboard or metrics port and would keep the
+		// old port open after an update. The validating webhook rejects custom
+		// managed rules, so ignoring this field is safe for the managed profile.
+		if instance.Spec.NetworkPolicy.Head != nil && (!r.isOpenShift || !utils.IsLegacySecurityEnabled(instance)) {
+			ingressRules = appendUniqueIngressRules(ingressRules, instance.Spec.NetworkPolicy.Head.IngressRules...)
 		}
 	}
 
@@ -283,6 +291,36 @@ func (r *NetworkPolicyController) buildHeadNetworkPolicy(instance *rayv1.RayClus
 			Egress:      egressRules,
 		},
 	}
+}
+
+// buildOpenShiftPlatformIngressRules derives the current platform rules from
+// RayStartParams without modifying the RayCluster. This lets an existing
+// cluster's NetworkPolicy follow a dashboard or metrics port update while
+// preserving the native policy fields supplied by the user.
+func (r *NetworkPolicyController) buildOpenShiftPlatformIngressRules(instance *rayv1.RayCluster) []networkingv1.NetworkPolicyIngressRule {
+	platform := instance.DeepCopy()
+	platform.Spec.NetworkPolicy = nil
+	utils.EnsureOpenShiftRayClusterNetworkPolicy(platform)
+	if platform.Spec.NetworkPolicy == nil || platform.Spec.NetworkPolicy.Head == nil {
+		return nil
+	}
+	return platform.Spec.NetworkPolicy.Head.IngressRules
+}
+
+func appendUniqueIngressRules(rules []networkingv1.NetworkPolicyIngressRule, additions ...networkingv1.NetworkPolicyIngressRule) []networkingv1.NetworkPolicyIngressRule {
+	for _, addition := range additions {
+		found := false
+		for _, existing := range rules {
+			if reflect.DeepEqual(existing, addition) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			rules = append(rules, addition)
+		}
+	}
+	return rules
 }
 
 func networkPolicyLabels(instance *rayv1.RayCluster, groupName string) map[string]string {
