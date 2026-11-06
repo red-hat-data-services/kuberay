@@ -98,6 +98,8 @@ linters:
     modernize:
       disable:
         - omitzero
+        # newexpr rewrites ptr.To(x)/&x to new(x); keep midstream stable without a mass Go 1.26 cleanup.
+        - newexpr
   exclusions:
     generated: strict
     presets:

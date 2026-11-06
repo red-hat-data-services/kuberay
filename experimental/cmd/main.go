@@ -103,6 +103,7 @@ func main() {
 	}
 
 	// Create reverse proxy
+	//nolint:gosec // G704: remote URL is built from configured local port, not user-controlled input.
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 	klog.Info("Connected to remote HTTP ", remoteURL)
 	// Create token authorization
