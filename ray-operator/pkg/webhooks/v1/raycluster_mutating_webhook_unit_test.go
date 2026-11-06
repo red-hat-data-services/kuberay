@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/utils/ptr"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 )
@@ -49,21 +48,21 @@ func TestWebhookEnforcesEnableIngressFalseOnOpenShift(t *testing.T) {
 		},
 		{
 			name:           "OpenShift: user sets false - webhook keeps false",
-			userSetValue:   ptr.To(false),
+			userSetValue:   new(false),
 			expectedValue:  false,
 			expectedLogMsg: "already false",
 			isOpenShift:    true,
 		},
 		{
 			name:           "OpenShift: user sets true - webhook OVERRIDES to false",
-			userSetValue:   ptr.To(true),
+			userSetValue:   new(true),
 			expectedValue:  false,
 			expectedLogMsg: "overriding",
 			isOpenShift:    true,
 		},
 		{
 			name:           "Kubernetes: user sets true - webhook respects",
-			userSetValue:   ptr.To(true),
+			userSetValue:   new(true),
 			expectedValue:  true,
 			expectedLogMsg: "",
 			isOpenShift:    false,
@@ -123,7 +122,7 @@ func TestWebhookStrictEnforcementOnOpenShift(t *testing.T) {
 		rayCluster := &rayv1.RayCluster{
 			Spec: rayv1.RayClusterSpec{
 				HeadGroupSpec: rayv1.HeadGroupSpec{
-					EnableIngress: ptr.To(true), // User wants Routes
+					EnableIngress: new(true), // User wants Routes
 				},
 			},
 		}
@@ -142,7 +141,7 @@ func TestWebhookStrictEnforcementOnOpenShift(t *testing.T) {
 		rayCluster := &rayv1.RayCluster{
 			Spec: rayv1.RayClusterSpec{
 				HeadGroupSpec: rayv1.HeadGroupSpec{
-					EnableIngress: ptr.To(true),
+					EnableIngress: new(true),
 				},
 			},
 		}

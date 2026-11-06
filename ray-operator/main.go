@@ -15,17 +15,14 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	k8szap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -41,6 +38,7 @@ import (
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/batchscheduler"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/metrics"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
+	"github.com/ray-project/kuberay/ray-operator/internal/managercache"
 	"github.com/ray-project/kuberay/ray-operator/pkg/features"
 	pkgtls "github.com/ray-project/kuberay/ray-operator/pkg/tls"
 	webhooks "github.com/ray-project/kuberay/ray-operator/pkg/webhooks/v1"
@@ -50,6 +48,8 @@ var (
 	scheme    = runtime.NewScheme()
 	setupLog  = ctrl.Log.WithName("setup")
 	userAgent = fmt.Sprintf("kuberay-operator/%s", utils.KUBERAY_VERSION)
+	buildTime = "unknown" // ODH/RHOAI carry: for debug
+	commitID  = "unknown" // ODH/RHOAI carry: for debug
 )
 
 func init() {
@@ -61,7 +61,7 @@ func init() {
 	utilruntime.Must(configapi.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
 	utilruntime.Must(gwv1.Install(scheme))
-	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.Install(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -200,16 +200,44 @@ func main() {
 		setupLog.Info("Deprecated feature flag forced-cluster-upgrade is enabled, which has no effect.")
 	}
 
+	if err := utilfeature.DefaultMutableFeatureGate.Set(featureGates); err != nil {
+		exitOnError(err, "Unable to set flag gates for known features")
+	}
+	features.LogFeatureGates(setupLog)
+
 	// validate the batch scheduler configs,
 	// exit with error if the configs is invalid.
 	if err := configapi.ValidateBatchSchedulerConfig(setupLog, config); err != nil {
 		exitOnError(err, "batch scheduler configs validation failed")
 	}
 
-	if err := utilfeature.DefaultMutableFeatureGate.Set(featureGates); err != nil {
-		exitOnError(err, "Unable to set flag gates for known features")
+	if features.Enabled(features.RayServiceIncrementalUpgrade) {
+		utilruntime.Must(gwv1.Install(scheme))
 	}
-	features.LogFeatureGates(setupLog)
+
+	// Although ContainerRestartPolicy is introduced in Kubernetes v1.34 as an alpha feature, which requires
+	// manually enabling the ContainerRestartRules feature gate, it becomes beta in v1.35.
+	// We require v1.35+ to avoid asking users to opt in to a separate K8s feature gate.
+	// NOTE: this checks the API server version only. Please make sure worker nodes are also v1.35+,
+	// as kubelets are allowed to be up to 3 minor versions older per the Kubernetes version skew policy.
+	// If ContainerRestartRules is not enabled on a kubelet, the per-container restart policy on the
+	// submitter container will be ignored. In this scenario, if the submitter container exit on failure,
+	// a 30-second timeout will be applied by the operator and could incorrectly mark the RayJob as Failed
+	// even if the Ray job is still running.
+	if features.Enabled(features.SidecarSubmitterRestart) {
+		serverVersion, err := utils.GetKubernetesVersion()
+		if err != nil {
+			exitOnError(err, "SidecarSubmitterRestart feature gate enabled but unable to detect K8s version. Feature requires K8s 1.35+.")
+		}
+		isAtLeast, err := utils.IsK8sVersionAtLeast(serverVersion, 1, 35, 0)
+		if err != nil {
+			exitOnError(err, "Failed to compare K8s version.")
+		}
+		if !isAtLeast {
+			exitOnError(fmt.Errorf("current version %s is below 1.35", serverVersion.GitVersion),
+				"SidecarSubmitterRestart feature gate requires K8s 1.35+")
+		}
+	}
 
 	// Manager options
 	options := ctrl.Options{
@@ -230,11 +258,12 @@ func main() {
 	// Set the informers label selectors to narrow the scope of the resources being watched and cached.
 	// This improves the scalability of the system, both for KubeRay itself by reducing the size of the
 	// informers cache, and for the API server / etcd, by reducing the number of watch events.
-	// For example, KubeRay is only interested in the batch Jobs it creates when reconciling RayJobs,
-	// so the controller sets the app.kubernetes.io/created-by=kuberay-operator label on any Job it creates,
-	// and that label is provided to the manager cache as a selector for Job resources.
-	selectorsByObject, err := cacheSelectors()
-	exitOnError(err, "unable to create cache selectors")
+	// For example, KubeRay is only interested in:
+	// - the batch Jobs it creates when reconciling RayJobs (app.kubernetes.io/created-by=kuberay-operator), and
+	// - Ray-managed Pods (ray.io/node-type in head|worker|redis-cleanup).
+	// These labels are provided to the manager cache as selectors for Job and Pod resources.
+	selectorsByObject, err := managercache.K8sControllerRuntimeCacheSelectors()
+	exitOnError(err, "unable to build manager cache ByObject")
 	options.Cache.ByObject = selectorsByObject
 
 	if watchNamespaces := strings.Split(config.WatchNamespace, ","); len(watchNamespaces) == 1 { // It is not possible for len(watchNamespaces) == 0 to be true. The length of `strings.Split("", ",")` is still 1.
@@ -262,6 +291,14 @@ func main() {
 	tlsResult, err := pkgtls.Resolve(context.Background(), restConfig)
 	if err != nil {
 		setupLog.Error(err, "unable to resolve TLS configuration")
+		os.Exit(1)
+	}
+	// ODH/RHOAI carry (RHOAIENG-95575): same APIServer profile used for
+	// metrics/webhook TLS is converted to kube-rbac-proxy flags for the
+	// Ray head auth sidecar. Not present upstream.
+	proxyTLSArgs, err := pkgtls.ProxyTLSArgs(tlsResult.Profile)
+	if err != nil {
+		setupLog.Error(err, "unable to convert TLS profile to kube-rbac-proxy args")
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = tlsResult.TLSOpts
@@ -309,16 +346,38 @@ func main() {
 	exitOnError(err, "unable to create batch scheduler manager")
 	batchSchedulerManager.AddToScheme(mgr.GetScheme())
 
+	// TODO: Remove isOpenShift and related reconciler options once Gateway API support is mature
+	// and Route-based dashboard access is no longer needed.
+	// See: https://github.com/ray-project/kuberay/pull/4365#issuecomment-4143407845
+	isOpenShift, err := utils.IsOpenShiftCluster(restConfig)
+	exitOnError(err, "unable to detect cluster type (OpenShift vs Kubernetes)")
+
 	rayClusterOptions := ray.RayClusterReconcilerOptions{
 		HeadSidecarContainers:    config.HeadSidecarContainers,
 		WorkerSidecarContainers:  config.WorkerSidecarContainers,
-		IsOpenShift:              utils.GetClusterType(),
+		IsOpenShift:              isOpenShift,
+		UseIngressOnOpenShift:    utils.ShouldUseIngressOnOpenShift(),
 		RayClusterMetricsManager: rayClusterMetricsManager,
 		BatchSchedulerManager:    batchSchedulerManager,
 		DefaultContainerEnvs:     config.DefaultContainerEnvs,
+		DefaultPodAnnotations:    config.DefaultPodAnnotations,
+		DefaultPodLabels:         config.DefaultPodLabels,
+		OIDCProxyTLSArgs:         proxyTLSArgs,
 	}
-	exitOnError(ray.NewReconciler(ctx, mgr, rayClusterOptions).SetupWithManager(mgr, config.ReconcileConcurrency),
+	exitOnError(ray.NewReconciler(mgr, rayClusterOptions).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayCluster")
+
+	if features.Enabled(features.RayClusterMTLS) {
+		// ODH/RHOAI carry: the OpenShift overlay enables RayClusterMTLS, but
+		// cert-manager may become ready after KubeRay starts. Keep the mTLS
+		// controller registered so it can recover from that startup ordering;
+		// do not replace this with a one-time cert-manager discovery check.
+		exitOnError(ray.NewRayClusterMTLSController(mgr).SetupWithManager(mgr),
+			"unable to create controller", "controller", "RayClusterMTLS")
+		setupLog.Info("RayClusterMTLS feature gate is enabled, starting mTLS controller")
+	} else {
+		setupLog.Info("RayClusterMTLS feature gate is disabled, skipping mTLS controller setup")
+	}
 
 	exitOnError(ray.NewRayServiceReconciler(ctx, mgr, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayService")
@@ -330,13 +389,19 @@ func main() {
 	exitOnError(ray.NewRayJobReconciler(ctx, mgr, rayJobOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayJob")
 
-	mtlsController := ray.NewRayClusterMTLSController(mgr.GetClient(), mgr.GetScheme(), &config)
-	exitOnError(mtlsController.SetupWithManager(mgr),
-		"unable to create controller", "controller", "RayClusterMTLS")
+	if features.Enabled(features.RayClusterNetworkPolicy) {
+		networkPolicyController, err := ray.NewNetworkPolicyController(mgr, isOpenShift)
+		exitOnError(err, "unable to create controller", "controller", "NetworkPolicy")
+		exitOnError(networkPolicyController.SetupWithManager(mgr, config.ReconcileConcurrency),
+			"unable to create controller", "controller", "NetworkPolicy")
+		setupLog.Info("NetworkPolicy controller registered")
+	}
 
-	exitOnError(ray.NewNetworkPolicyController(mgr).SetupWithManager(mgr),
-		"unable to create controller", "controller", "NetworkPolicy")
-	setupLog.Info("NetworkPolicy controller registered (annotation-based activation)")
+	if isOpenShift && features.Enabled(features.RayClusterMTLS) && features.Enabled(features.RayClusterNetworkPolicy) {
+		legacySecurityController := ray.NewLegacySecurityController(mgr, isOpenShift)
+		exitOnError(legacySecurityController.SetupWithManager(mgr),
+			"unable to create controller", "controller", "RayClusterLegacySecurity")
+	}
 
 	authController := ray.NewAuthenticationController(mgr, rayClusterOptions)
 	exitOnError(authController.SetupWithManager(mgr),
@@ -346,7 +411,11 @@ func main() {
 		exitOnError(webhooks.SetupRayClusterDefaulterWithManager(mgr),
 			"unable to create webhook", "webhook", "RayCluster-Defaulter")
 		exitOnError(webhooks.SetupRayClusterWebhookWithManager(mgr),
-			"unable to create webhook", "webhook", "RayCluster-Validator")
+			"unable to create webhook", "webhook", "RayCluster")
+		exitOnError(webhooks.SetupRayJobWebhookWithManager(mgr),
+			"unable to create webhook", "webhook", "RayJob")
+		exitOnError(webhooks.SetupRayServiceWebhookWithManager(mgr),
+			"unable to create webhook", "webhook", "RayService")
 	}
 
 	if features.Enabled(features.RayCronJob) {
@@ -356,29 +425,18 @@ func main() {
 	} else {
 		setupLog.Info("RayCronJob feature gate is disabled, skipping RayCronJob controller setup")
 	}
+
 	// +kubebuilder:scaffold:builder
 
 	exitOnError(mgr.AddHealthzCheck("healthz", healthz.Ping), "unable to set up health check")
 	exitOnError(mgr.AddReadyzCheck("readyz", healthz.Ping), "unable to set up ready check")
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager", "version", utils.KUBERAY_VERSION, "gitSHA", commitID, "buildTime", buildTime)
 	if err := mgr.Start(ctx); err != nil {
 		cancel()
 		exitOnError(err, "problem running manager")
 	}
 	cancel()
-}
-
-func cacheSelectors() (map[client.Object]cache.ByObject, error) {
-	label, err := labels.NewRequirement(utils.KubernetesCreatedByLabelKey, selection.Equals, []string{utils.ComponentName})
-	if err != nil {
-		return nil, err
-	}
-	selector := labels.NewSelector().Add(*label)
-
-	return map[client.Object]cache.ByObject{
-		&batchv1.Job{}: {Label: selector},
-	}, nil
 }
 
 func exitOnError(err error, msg string, keysAndValues ...any) {

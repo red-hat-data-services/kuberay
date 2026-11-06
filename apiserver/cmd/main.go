@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -230,17 +229,13 @@ func serveSwaggerFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := strings.TrimPrefix(r.URL.Path, "/swagger/")
-	if strings.TrimSpace(*localSwaggerPath) != "" {
-		// use the specified path,  for development the is  `${REPO_ROOT}/proto/swagger`.
-		p = path.Join(*localSwaggerPath, "/", p)
-	} else {
-		// In docker images the *.swagger.json are copied to `/workspace/proto/swagger/``.
-		p = path.Join("/workspace/proto/swagger/", p)
+	swaggerRoot := *localSwaggerPath
+	if strings.TrimSpace(swaggerRoot) == "" {
+		swaggerRoot = "/workspace/proto/swagger/"
 	}
 
-	klog.Infof("Serving swagger-file: %s", p)
-	http.ServeFile(w, r, p)
+	klog.Infof("Serving swagger-file: %s", r.URL.Path)
+	http.StripPrefix("/swagger/", http.FileServer(http.Dir(swaggerRoot))).ServeHTTP(w, r)
 }
 
 // go-bindata --nocompress --pkg swagger -o pkg/swagger/datafile.go third_party/swagger-ui/...

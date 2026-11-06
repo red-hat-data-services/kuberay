@@ -50,7 +50,7 @@ func TestAzureHistoryServer(t *testing.T) {
 func testAzureLiveClusters(test Test, g *WithT, namespace *corev1.Namespace, azureClient *azblob.Client) {
 	rayCluster := PrepareAzureBlobTestEnv(test, g, namespace, azureClient)
 	ApplyRayJobAndWaitForCompletion(test, g, namespace, rayCluster)
-	ApplyHistoryServer(test, g, namespace, AzureHistoryServerManifestPath)
+	ApplyHistoryServer(test, g, namespace, AzureHistoryServerManifestPath, EnableLiveClustersArg)
 	historyServerURL := GetHistoryServerURL(test, g, namespace)
 
 	clusterInfo := getClusterFromList(test, g, historyServerURL, rayCluster.Name, namespace.Name)
@@ -87,14 +87,14 @@ func testAzureDeadClusters(test Test, g *WithT, namespace *corev1.Namespace, azu
 func testAzureLogFileEndpointLiveCluster(test Test, g *WithT, namespace *corev1.Namespace, azureClient *azblob.Client) {
 	rayCluster := PrepareAzureBlobTestEnv(test, g, namespace, azureClient)
 	ApplyRayJobAndWaitForCompletion(test, g, namespace, rayCluster)
-	ApplyHistoryServer(test, g, namespace, AzureHistoryServerManifestPath)
+	ApplyHistoryServer(test, g, namespace, AzureHistoryServerManifestPath, EnableLiveClustersArg)
 	historyServerURL := GetHistoryServerURL(test, g, namespace)
 
 	clusterInfo := getClusterFromList(test, g, historyServerURL, rayCluster.Name, namespace.Name)
 	client := CreateHTTPClientWithCookieJar(g)
 	setClusterContext(test, g, client, historyServerURL, namespace.Name, rayCluster.Name, clusterInfo.SessionName)
 
-	nodeID := GetOneOfNodeID(g, client, historyServerURL, true)
+	nodeID := GetOneOfNodeID(g, client, historyServerURL, false)
 
 	test.T().Run("should return log content", func(t *testing.T) {
 		VerifyLogFileEndpointReturnsContent(test, NewWithT(t), client, historyServerURL, nodeID)

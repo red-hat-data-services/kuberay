@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,7 +57,7 @@ func rayClusterTemplate(name string, namespace string) *rayv1.RayCluster {
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{
 				Medium:    corev1.StorageMediumMemory,
-				SizeLimit: ptr.To(resource.MustParse("1Gi")),
+				SizeLimit: new(resource.MustParse("1Gi")),
 			},
 		},
 	}
@@ -444,7 +444,7 @@ var _ = Context("Inside the default namespace", func() {
 		ctx := context.Background()
 		namespace := "default"
 		rayCluster := rayClusterTemplate("raycluster-autoscaler", namespace)
-		rayCluster.Spec.EnableInTreeAutoscaling = ptr.To(true)
+		rayCluster.Spec.EnableInTreeAutoscaling = new(true)
 		workerPods := corev1.PodList{}
 		workerFilter := common.RayClusterGroupPodsAssociationOptions(rayCluster, rayCluster.Spec.WorkerGroupSpecs[0].GroupName).ToListOptions()
 
@@ -885,7 +885,7 @@ var _ = Context("Inside the default namespace", func() {
 			ctx := context.Background()
 			namespace := "default"
 			rayCluster := rayClusterTemplate("raycluster-suspend-workergroup-autoscaler", namespace)
-			rayCluster.Spec.EnableInTreeAutoscaling = ptr.To(true)
+			rayCluster.Spec.EnableInTreeAutoscaling = new(true)
 			allPods := corev1.PodList{}
 			allFilters := common.RayClusterAllPodsAssociationOptions(rayCluster).ToListOptions()
 			workerFilters := common.RayClusterGroupPodsAssociationOptions(rayCluster, rayCluster.Spec.WorkerGroupSpecs[0].GroupName).ToListOptions()
@@ -936,7 +936,7 @@ var _ = Context("Inside the default namespace", func() {
 		rayCluster := rayClusterTemplate("raycluster-multihost", namespace)
 		numOfHosts := int32(4)
 		rayCluster.Spec.WorkerGroupSpecs[0].NumOfHosts = numOfHosts
-		rayCluster.Spec.EnableInTreeAutoscaling = ptr.To(true)
+		rayCluster.Spec.EnableInTreeAutoscaling = new(true)
 		headPods := corev1.PodList{}
 		headFilters := common.RayClusterHeadPodsAssociationOptions(rayCluster).ToListOptions()
 		numHeadPods := 1
@@ -1328,7 +1328,7 @@ var _ = Context("Inside the default namespace", func() {
 
 			By("Check RayCluster conditions empty initially")
 			// Initially, neither head Pod nor worker Pod are ready. The RayClusterProvisioned condition should not be present.
-			Expect(testRayCluster.Status.Conditions).To(BeEmpty())
+			Expect(rayCluster.Status.Conditions).To(BeEmpty())
 
 			By("Update the head pod to Running and Ready")
 			headPod.Status.Phase = corev1.PodRunning
@@ -1694,13 +1694,14 @@ var _ = Context("Inside the default namespace", func() {
 		})
 
 		It("The manager cache should only include Ray node Pods (ray.io/node-type in head|worker|redis-cleanup), not the unrelated Pod", func() {
+			cacheClient := mgr.GetClient()
 			clusterListOpts := []client.ListOption{
 				client.InNamespace(namespace),
 				client.MatchingLabels{utils.RayClusterLabelKey: rayClusterName},
 			}
 			Eventually(func(g Gomega) {
 				var cachedRayPods corev1.PodList
-				g.Expect(k8sClient.List(ctx, &cachedRayPods, clusterListOpts...)).To(Succeed())
+				g.Expect(cacheClient.List(ctx, &cachedRayPods, clusterListOpts...)).To(Succeed())
 				var names []string
 				for _, p := range cachedRayPods.Items {
 					names = append(names, p.Name)
@@ -1727,7 +1728,7 @@ var _ = Context("Inside the default namespace", func() {
 			return &RayClusterReconciler{
 				Client:                     k8sClient,
 				Scheme:                     k8sClient.Scheme(),
-				Recorder:                   record.NewFakeRecorder(10),
+				Recorder:                   events.NewFakeRecorder(10),
 				rayClusterScaleExpectation: expectations.NewRayClusterScaleExpectation(k8sClient),
 			}
 		}

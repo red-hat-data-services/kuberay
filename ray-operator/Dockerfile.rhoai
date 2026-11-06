@@ -1,5 +1,5 @@
 # Build the manager binary - we don't have a registry ubi9 toolset for go1.24 yet
-FROM registry.redhat.io/ubi9/go-toolset@sha256:0a4666f7a4eb0644c97a73cba198eb268691b270d97831822689e7a2088f87be AS builder
+FROM registry.redhat.io/ubi9/go-toolset@sha256:beaa5163d808534e703aca4d3c2845210f032141eb0b85303c18d453d624d1f0 AS builder
 
 
 WORKDIR /workspace
@@ -14,13 +14,15 @@ RUN go mod download
 COPY main.go main.go
 COPY apis/ apis/
 COPY controllers/ controllers/
+COPY internal/ internal/
 COPY pkg/features pkg/features
 COPY pkg/utils pkg/utils
 COPY pkg/webhooks pkg/webhooks
 
 # Build
 USER root
-RUN CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -tags strictfipsruntime -a -o manager main.go
+ARG COMMIT_SHA1=unknown
+RUN CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -tags strictfipsruntime -ldflags="-X main.commitID=${COMMIT_SHA1}" -a -o manager main.go
 
 FROM registry.access.redhat.com/ubi9/ubi:latest
 

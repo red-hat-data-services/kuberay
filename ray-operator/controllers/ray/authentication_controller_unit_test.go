@@ -31,8 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,8 +50,8 @@ func setupScheme() *runtime.Scheme {
 	_ = rayv1.AddToScheme(s)
 	_ = configv1.AddToScheme(s)
 	_ = routev1.AddToScheme(s)
-	_ = gatewayv1.AddToScheme(s)
-	_ = gatewayv1beta1.AddToScheme(s)
+	_ = gatewayv1.Install(s)
+	_ = gatewayv1beta1.Install(s)
 	return s
 }
 
@@ -397,7 +396,7 @@ func TestEnsureOAuthServiceAccount(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -472,7 +471,7 @@ func TestEnsureOIDCConfigMap(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -566,7 +565,7 @@ func TestEnsureHttpRoute(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 			}
 
 			// Execute
@@ -661,7 +660,7 @@ func TestMapAuthResourceToRayClusters(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			// Create a fake auth resource to trigger mapping
@@ -699,9 +698,12 @@ func TestGetOIDCProxySidecar(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "default",
 		},
+		Spec: rayv1.RayClusterSpec{HeadGroupSpec: rayv1.HeadGroupSpec{
+			RayStartParams: map[string]string{"dashboard-port": "9365"},
+		}},
 	}
 
-	container := GetOIDCProxySidecar(cluster)
+	container := GetOIDCProxySidecar(cluster, []string{"--tls-min-version=VersionTLS12"})
 
 	assert.Equal(t, oidcProxyContainerName, container.Name)
 	assert.Equal(t, oidcProxyContainerImage, container.Image)
@@ -712,6 +714,9 @@ func TestGetOIDCProxySidecar(t *testing.T) {
 	// Verify port configuration
 	assert.Equal(t, int32(authProxyPort), container.Ports[0].ContainerPort)
 	assert.Equal(t, oidcProxyPortName, container.Ports[0].Name)
+	assert.Contains(t, container.Args, "--secure-listen-address=0.0.0.0:8443")
+	assert.Contains(t, container.Args, "--upstream=http://127.0.0.1:9365/")
+	assert.Contains(t, container.Args, "--tls-min-version=VersionTLS12")
 
 	// Verify volume mount
 	assert.Equal(t, "kube-rbac-proxy-config-"+cluster.Name, container.VolumeMounts[0].Name)
@@ -772,7 +777,7 @@ func TestReconcile_RayClusterNotFound(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: false,
 		},
@@ -802,7 +807,7 @@ func TestReconcile_ManagedByExternalController(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: rayv1.RayClusterSpec{
-			ManagedBy: ptr.To("external-controller"),
+			ManagedBy: new("external-controller"),
 		},
 	}
 
@@ -815,7 +820,7 @@ func TestReconcile_ManagedByExternalController(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: false,
 		},
@@ -915,7 +920,7 @@ func TestCleanupOIDCResources(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 			}
 
 			// Execute cleanup
@@ -975,12 +980,12 @@ func TestEnforceEnableIngressFalseOnOpenShift(t *testing.T) {
 		},
 		{
 			name:         "enableIngress is true - should override to false",
-			initialValue: ptr.To(true),
+			initialValue: new(true),
 			expectUpdate: true,
 		},
 		{
 			name:         "enableIngress is already false - no update needed",
-			initialValue: ptr.To(false),
+			initialValue: new(false),
 			expectUpdate: false,
 		},
 	}
@@ -1009,7 +1014,7 @@ func TestEnforceEnableIngressFalseOnOpenShift(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},
@@ -1053,7 +1058,7 @@ func TestEnforceEnableIngressFalseOnOpenShift_Idempotency(t *testing.T) {
 		},
 		Spec: rayv1.RayClusterSpec{
 			HeadGroupSpec: rayv1.HeadGroupSpec{
-				EnableIngress: ptr.To(true),
+				EnableIngress: new(true),
 			},
 		},
 	}
@@ -1066,7 +1071,7 @@ func TestEnforceEnableIngressFalseOnOpenShift_Idempotency(t *testing.T) {
 	controller := &AuthenticationController{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -1120,7 +1125,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 					UID:       "test-uid",
 				},
 				Spec: rayv1.RayClusterSpec{
-					EnableInTreeAutoscaling: ptr.To(false),
+					EnableInTreeAutoscaling: new(false),
 				},
 			},
 			existingRB:     nil,
@@ -1138,7 +1143,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 					UID:       "test-uid",
 				},
 				Spec: rayv1.RayClusterSpec{
-					EnableInTreeAutoscaling: ptr.To(true),
+					EnableInTreeAutoscaling: new(true),
 				},
 			},
 			existingRB:     nil,
@@ -1157,7 +1162,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 					UID:       "test-uid",
 				},
 				Spec: rayv1.RayClusterSpec{
-					EnableInTreeAutoscaling: ptr.To(true),
+					EnableInTreeAutoscaling: new(true),
 				},
 			},
 			existingRB: &rbacv1.RoleBinding{
@@ -1191,7 +1196,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 					UID:       "test-uid",
 				},
 				Spec: rayv1.RayClusterSpec{
-					EnableInTreeAutoscaling: ptr.To(true),
+					EnableInTreeAutoscaling: new(true),
 				},
 			},
 			existingRB: &rbacv1.RoleBinding{
@@ -1225,7 +1230,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 					UID:       "test-uid",
 				},
 				Spec: rayv1.RayClusterSpec{
-					EnableInTreeAutoscaling: ptr.To(true),
+					EnableInTreeAutoscaling: new(true),
 				},
 			},
 			existingRB: func() *rbacv1.RoleBinding {
@@ -1280,7 +1285,7 @@ func TestEnsureAutoscalerRoleBindingForAuthSA(t *testing.T) {
 			controller := &AuthenticationController{
 				Client:   fakeClient,
 				Scheme:   s,
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 			}
 
 			pending, err := controller.ensureAutoscalerRoleBindingForAuthSA(ctx, tc.cluster, tc.authMode, ctrl.Log)

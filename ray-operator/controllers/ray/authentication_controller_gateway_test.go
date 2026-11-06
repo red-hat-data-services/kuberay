@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -59,7 +59,7 @@ func TestEnsureReferenceGrant(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -141,7 +141,7 @@ func TestSharedReferenceGrantMultipleClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -207,7 +207,7 @@ func TestCleanupReferenceGrantWithMultipleClusters(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -256,6 +256,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 		},
 		Spec: rayv1.RayClusterSpec{
 			HeadGroupSpec: rayv1.HeadGroupSpec{
+				RayStartParams: map[string]string{"dashboard-port": "9365"},
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
@@ -277,7 +278,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -322,7 +323,7 @@ func TestEnsureHttpRouteInPlatformNamespace(t *testing.T) {
 	assert.Equal(t, "test-cluster-head-svc", string(backendRef.Name), "Backend should reference head service")
 	assert.NotNil(t, backendRef.Namespace, "Backend should have namespace set")
 	assert.Equal(t, "user-namespace", string(*backendRef.Namespace), "Backend should reference user namespace")
-	assert.Equal(t, int32(8265), *backendRef.Port, "Backend should reference port 8265")
+	assert.Equal(t, int32(9365), *backendRef.Port, "Backend should reference the configured dashboard port")
 }
 
 func TestCleanupOIDCResourcesWithCrossNamespace(t *testing.T) {
@@ -388,7 +389,7 @@ func TestCleanupOIDCResourcesWithCrossNamespace(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 	}
 
 	// Execute cleanup (this is the last cluster, so ReferenceGrant should be deleted)
@@ -479,7 +480,7 @@ func TestHTTPRouteNamingConflictPrevention(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -544,7 +545,7 @@ func TestEnsureOIDCResourcesCreatesReferenceGrantBeforeHTTPRoute(t *testing.T) {
 		Client:     fakeClient,
 		Scheme:     s,
 		RESTMapper: mapper,
-		Recorder:   record.NewFakeRecorder(10),
+		Recorder:   events.NewFakeRecorder(10),
 		options: RayClusterReconcilerOptions{
 			IsOpenShift: true,
 		},
@@ -645,7 +646,7 @@ func TestHTTPRouteNameDNSLabelLimit(t *testing.T) {
 				Client:     fakeClient,
 				Scheme:     s,
 				RESTMapper: mapper,
-				Recorder:   record.NewFakeRecorder(10),
+				Recorder:   events.NewFakeRecorder(10),
 				options: RayClusterReconcilerOptions{
 					IsOpenShift: true,
 				},

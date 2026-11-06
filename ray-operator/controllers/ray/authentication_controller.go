@@ -17,8 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -77,7 +76,7 @@ func init() {
 // resources (ConfigMaps, ServiceAccounts, OpenShift Routes) and manages authentication configurations for Ray clusters on Openshift.
 type AuthenticationController struct {
 	client.Client
-	Recorder   record.EventRecorder
+	Recorder   events.EventRecorder
 	Scheme     *runtime.Scheme
 	RESTMapper meta.RESTMapper
 	options    RayClusterReconcilerOptions
@@ -89,7 +88,7 @@ func NewAuthenticationController(mgr manager.Manager, options RayClusterReconcil
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		RESTMapper: mgr.GetRESTMapper(),
-		Recorder:   mgr.GetEventRecorderFor("authentication-controller"),
+		Recorder:   mgr.GetEventRecorder("authentication-controller"),
 		options:    options,
 	}
 }
@@ -297,7 +296,7 @@ func (r *AuthenticationController) handleOIDCConfiguration(ctx context.Context, 
 	}
 
 	eventMsg := fmt.Sprintf("Authentication configured for RayCluster (mode: %s)", authMode)
-	r.Recorder.Event(rayCluster, "Normal", "AuthenticationConfigured", eventMsg)
+	r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "AuthenticationConfigured", string(utils.CreateAction), eventMsg)
 	return nil
 }
 
@@ -462,7 +461,8 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 		weight := int32(1)
 		pathExact := gatewayv1.PathMatchExact
 		pathPrefix := gatewayv1.PathMatchPathPrefix
-		port := gatewayv1.PortNumber(8265)
+		port := utils.EffectiveRayStartParamPort(
+			cluster.Spec.HeadGroupSpec.RayStartParams, "dashboard-port", utils.DefaultDashboardPort)
 		pathValue := "/"
 		prefixValue := fmt.Sprintf("/ray/%s/%s", cluster.Namespace, cluster.Name)
 
@@ -496,9 +496,9 @@ func (r *AuthenticationController) ensureHttpRoute(ctx context.Context, cluster 
 							RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
 								Path: &gatewayv1.HTTPPathModifier{
 									Type:            gatewayv1.FullPathHTTPPathModifier,
-									ReplaceFullPath: ptr.To(prefixValue + "/#/"),
+									ReplaceFullPath: new(prefixValue + "/#/"),
 								},
-								StatusCode: ptr.To(302), // Temporary redirect
+								StatusCode: new(302), // Temporary redirect
 							},
 						},
 					},
@@ -601,8 +601,8 @@ func (r *AuthenticationController) cleanupOldHTTPRouteFromClusterNamespace(ctx c
 	logger.Info("Deleted old HTTPRoute from cluster namespace (migration complete)",
 		"name", oldHttpRouteName,
 		"namespace", cluster.Namespace)
-	r.Recorder.Event(cluster, "Normal", "HTTPRouteMigrated",
-		fmt.Sprintf("Migrated HTTPRoute from %s to platform namespace", cluster.Namespace))
+	r.Recorder.Eventf(cluster, nil, corev1.EventTypeNormal, "HTTPRouteMigrated", string(utils.UpdateAction),
+		"Migrated HTTPRoute from %s to platform namespace", cluster.Namespace)
 
 	return nil
 }
@@ -921,7 +921,11 @@ func (r *AuthenticationController) ensureOAuthServiceAccount(ctx context.Context
 // OAuth sidecar is automatically injected by RayCluster controller during pod creation
 // Users must delete and recreate their RayCluster to enable OAuth on existing clusters
 
-func GetOIDCProxySidecar(cluster *rayv1.RayCluster) corev1.Container {
+// GetOIDCProxySidecar builds the ODH/RHOAI kube-rbac-proxy sidecar for the Ray
+// head. tlsArgs are OpenShift APIServer TLS-profile flags (RHOAIENG-95575);
+// the proxy generates its serving cert when no cert/key files are supplied,
+// and the Ray dashboard is a loopback HTTP upstream (no upstream TLS).
+func GetOIDCProxySidecar(cluster *rayv1.RayCluster, tlsArgs []string) corev1.Container {
 	namer := utils.NewResourceNamer(cluster)
 	configMapName := namer.ConfigMapName()
 	return corev1.Container{
@@ -931,12 +935,13 @@ func GetOIDCProxySidecar(cluster *rayv1.RayCluster) corev1.Container {
 		Ports: []corev1.ContainerPort{
 			utils.CreateContainerPort(authProxyPort, oidcProxyPortName),
 		},
-		Args: []string{
+		Args: append([]string{
 			fmt.Sprintf("--secure-listen-address=0.0.0.0:%d", authProxyPort),
-			"--upstream=http://127.0.0.1:8265/",
+			fmt.Sprintf("--upstream=http://127.0.0.1:%d/", utils.EffectiveRayStartParamPort(
+				cluster.Spec.HeadGroupSpec.RayStartParams, "dashboard-port", utils.DefaultDashboardPort)),
 			"--config-file=/etc/kube-rbac-proxy/config.yaml",
 			"--logtostderr=true",
-		},
+		}, tlsArgs...),
 		VolumeMounts: []corev1.VolumeMount{
 			utils.CreateVolumeMount(configMapName, "/etc/kube-rbac-proxy/", true),
 		},
@@ -1015,7 +1020,7 @@ func (r *AuthenticationController) enforceEnableIngressFalseOnOpenShift(ctx cont
 		"cluster", rayCluster.Name, "previousValue", rayCluster.Spec.HeadGroupSpec.EnableIngress)
 
 	// Update the cluster spec
-	rayCluster.Spec.HeadGroupSpec.EnableIngress = ptr.To(false)
+	rayCluster.Spec.HeadGroupSpec.EnableIngress = new(false)
 	if err := r.Update(ctx, rayCluster); err != nil {
 		logger.Error(err, "Failed to enforce enableIngress to false", "cluster", rayCluster.Name)
 		return err
@@ -1024,13 +1029,11 @@ func (r *AuthenticationController) enforceEnableIngressFalseOnOpenShift(ctx cont
 	if wasTrue {
 		logger.Info("Overrode user-specified enableIngress from true to false for Gateway-only access",
 			"cluster", rayCluster.Name)
-		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
-			"EnableIngressEnforced",
+		r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "EnableIngressEnforced", string(utils.UpdateAction),
 			"Set enableIngress to false to enforce Gateway-only access (overrode user value)")
 	} else if wasMissing {
 		logger.Info("Set enableIngress to false for Gateway-only access (was not set)", "cluster", rayCluster.Name)
-		r.Recorder.Eventf(rayCluster, corev1.EventTypeNormal,
-			"EnableIngressSet",
+		r.Recorder.Eventf(rayCluster, nil, corev1.EventTypeNormal, "EnableIngressSet", string(utils.UpdateAction),
 			"Set enableIngress to false for Gateway-only access")
 	}
 

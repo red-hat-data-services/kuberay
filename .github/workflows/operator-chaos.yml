@@ -121,9 +121,26 @@ jobs:
             --source-crds "${source_dir}" \
             --target-crds "${target_dir}"
 
+          # Kubernetes 1.36 replaces alpha PodSpec.workloadRef with schedulingGroup (KEP 5832).
+          # Ignore only removals paired with that replacement; keep other breaking changes blocking.
           crd_breaking=$(jq -r '
-            reduce ((.crds // [])[]?.apiVersions[]?.schemaChanges[]?) as $change
-              (0; if ($change.severity | ascii_downcase) == "breaking" then . + 1 else . end)
+            def is_workloadref_replacement($changes; $change):
+              $change.type == "FieldRemoved"
+              and ($change.path // "" | endswith(".workloadRef"))
+              and any($changes[];
+                .type == "FieldAdded"
+                and .path == (($change.path | rtrimstr("workloadRef")) + "schedulingGroup")
+              );
+
+            reduce ((.crds // [])[]?.apiVersions[]?) as $api_version
+              (0;
+                reduce (($api_version.schemaChanges // [])[]) as $change
+                  (.;
+                    if ($change.severity | ascii_downcase) == "breaking"
+                       and (is_workloadref_replacement(($api_version.schemaChanges // []); $change) | not)
+                    then . + 1 else . end
+                  )
+              )
           ' "${crd_diff_json}")
           if (( crd_breaking > 0 )); then
             echo "operator-chaos detected ${crd_breaking} breaking CRD schema change(s)."

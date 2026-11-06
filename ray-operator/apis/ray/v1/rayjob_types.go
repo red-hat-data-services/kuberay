@@ -34,11 +34,12 @@ var AllJobStatuses = []JobStatus{
 
 // This function should be synchronized with the function `is_terminal()` in Ray Job.
 func IsJobTerminal(status JobStatus) bool {
-	terminalStatusSet := map[JobStatus]struct{}{
-		JobStatusStopped: {}, JobStatusSucceeded: {}, JobStatusFailed: {},
+	switch status {
+	case JobStatusStopped, JobStatusSucceeded, JobStatusFailed:
+		return true
+	default:
+		return false
 	}
-	_, ok := terminalStatusSet[status]
-	return ok
 }
 
 // JobDeploymentStatus indicates RayJob status including RayCluster lifecycle management and Job submission
@@ -60,11 +61,7 @@ const (
 // IsJobDeploymentTerminal returns true if the given JobDeploymentStatus
 // is in a terminal state. Terminal states are either Complete or Failed.
 func IsJobDeploymentTerminal(status JobDeploymentStatus) bool {
-	terminalStatusSet := map[JobDeploymentStatus]struct{}{
-		JobDeploymentStatusComplete: {}, JobDeploymentStatusFailed: {},
-	}
-	_, ok := terminalStatusSet[status]
-	return ok
+	return status == JobDeploymentStatusComplete || status == JobDeploymentStatusFailed
 }
 
 // JobFailedReason indicates the reason the RayJob changes its JobDeploymentStatus to 'Failed'
@@ -76,6 +73,7 @@ const (
 	PreRunningDeadlineExceeded                       JobFailedReason = "PreRunningDeadlineExceeded"
 	AppFailed                                        JobFailedReason = "AppFailed"
 	JobDeploymentStatusTransitionGracePeriodExceeded JobFailedReason = "JobDeploymentStatusTransitionGracePeriodExceeded"
+	JobStatusCheckTimeoutExceeded                    JobFailedReason = "JobStatusCheckTimeoutExceeded"
 	ValidationFailed                                 JobFailedReason = "ValidationFailed"
 )
 
@@ -91,8 +89,8 @@ const (
 // DeletionStrategy configures automated cleanup after the RayJob reaches a terminal state.
 // Two mutually exclusive styles are supported:
 //
-//	Legacy: provide both onSuccess and onFailure (deprecated; removal planned for 1.6.0). May be combined with shutdownAfterJobFinishes and (optionally) global TTLSecondsAfterFinished.
-//	Rules: provide deletionRules (non-empty list). Rules mode is incompatible with shutdownAfterJobFinishes, legacy fields, and the global TTLSecondsAfterFinished (use per‑rule condition.ttlSeconds instead).
+//   - Legacy: provide both onSuccess and onFailure (deprecated; removal planned for 1.6.0). May be combined with shutdownAfterJobFinishes and (optionally) global TTLSecondsAfterFinished.
+//   - Rules: provide deletionRules (non-empty list). Rules mode is incompatible with shutdownAfterJobFinishes, legacy fields, and the global TTLSecondsAfterFinished (use per‑rule condition.ttlSeconds instead).
 //
 // Semantics:
 //   - A non-empty deletionRules selects rules mode; empty lists are treated as unset.
@@ -190,7 +188,8 @@ const (
 )
 
 type SubmitterConfig struct {
-	// BackoffLimit of the submitter k8s job.
+	// BackoffLimit of the submitter. In K8sJobMode, this is the K8s Job backoffLimit.
+	// In SidecarMode with SidecarSubmitterRestart enabled, this is the maximum container restart count.
 	// +optional
 	BackoffLimit *int32 `json:"backoffLimit,omitempty"`
 }
@@ -341,6 +340,10 @@ type RayJobStatus struct {
 	// RayClusterStatus is the status of the RayCluster running the job.
 	// +optional
 	RayClusterStatus RayClusterStatus `json:"rayClusterStatus,omitempty"`
+	// JobStatusCheckFailureStartTime is set when job status checks via the Ray Dashboard started failing.
+	// Reset on a successful check. JobDeploymentStatus transitions to 'Failed' after RAYJOB_STATUS_CHECK_TIMEOUT_SECONDS
+	// +optional
+	JobStatusCheckFailureStartTime *metav1.Time `json:"jobStatusCheckFailureStartTime,omitempty"`
 
 	// observedGeneration is the most recent generation observed for this RayJob. It corresponds to the
 	// RayJob's generation, which is updated on mutation by the API Server.
@@ -376,8 +379,4 @@ type RayJobList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []RayJob `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&RayJob{}, &RayJobList{})
 }
