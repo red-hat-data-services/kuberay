@@ -264,10 +264,13 @@ pip: ["python-multipart==0.0.6"]
 		assert.Equal(t, expected[i], command[i])
 		if expected[i] == "--runtime-env-json" {
 			// Decode the JSON string from the next element.
+			i++
+			require.Less(t, i, len(expected), "expected --runtime-env-json to be followed by a JSON value")
+			require.Less(t, i, len(command), "command --runtime-env-json to be followed by a JSON value")
 			var expectedMap, actualMap map[string]any
-			unquoteExpected, err1 := strconv.Unquote(expected[i+1])
+			unquoteExpected, err1 := strconv.Unquote(expected[i])
 			require.NoError(t, err1)
-			unquotedCommand, err2 := strconv.Unquote(command[i+1])
+			unquotedCommand, err2 := strconv.Unquote(command[i])
 			require.NoError(t, err2)
 			err1 = json.Unmarshal([]byte(unquoteExpected), &expectedMap)
 			err2 = json.Unmarshal([]byte(unquotedCommand), &actualMap)
@@ -278,9 +281,6 @@ pip: ["python-multipart==0.0.6"]
 
 			// Compare the maps directly to avoid errors due to ordering.
 			assert.Equal(t, expectedMap, actualMap)
-
-			// Skip the next element because we've just checked it.
-			i++
 		}
 	}
 }
