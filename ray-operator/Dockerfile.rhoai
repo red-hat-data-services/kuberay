@@ -24,7 +24,7 @@ USER root
 ARG COMMIT_SHA1=unknown
 RUN CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -tags strictfipsruntime -ldflags="-X main.commitID=${COMMIT_SHA1}" -a -o manager main.go
 
-FROM registry.access.redhat.com/ubi9/ubi:latest
+FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:87f66688da4e206d5a1877088626c542288a5ccd97898cf363b588d57817e6be
 
 RUN dnf install -y bind-utils
 
