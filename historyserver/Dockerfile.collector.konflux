@@ -1,9 +1,9 @@
 # Collector sidecar image for Konflux / RHOAI (RHAI-23424).
 # Build context: historyserver/ (repository root for this component).
 ARG SOURCE_CODE=.
-ARG RUNTIME_IMAGE=registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:c7fdcf2617a608d07f95fa01d8936fc8bf898096a60e5ebc432aae8ead50ea6c
+ARG RUNTIME_IMAGE=registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:5e9a0970f73f4800445c3ce0ca0d6b7ea1a8c620b81e735d16432db09d6787bc
 
-FROM registry.access.redhat.com/ubi9/go-toolset@sha256:5f0dead6a152de46a19f51322ea8e06d0d9f282a4937d663cf5a226cb8744bc8 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset@sha256:51eef2836e5223c41577757c30544fbfb3f0710f3436b70b82d2195e35fcb743 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
