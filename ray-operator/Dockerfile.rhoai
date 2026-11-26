@@ -1,5 +1,5 @@
-# Build the manager binary - we don't have a registry ubi9 toolset for go1.24 yet
-FROM registry.redhat.io/ubi9/go-toolset@sha256:a2ad457dc7525635613d2355037239ca9bf4374ba3b59961d1cdaa4d5f1af7d8 AS builder
+# Build the manager binary (Go 1.26.x toolset on access registry; matches downstream Dockerfile.konflux / RHDS main)
+FROM registry.access.redhat.com/ubi9/go-toolset@sha256:51eef2836e5223c41577757c30544fbfb3f0710f3436b70b82d2195e35fcb743 AS builder
 
 
 WORKDIR /workspace
@@ -16,6 +16,7 @@ COPY apis/ apis/
 COPY controllers/ controllers/
 COPY internal/ internal/
 COPY pkg/features pkg/features
+COPY pkg/tls pkg/tls
 COPY pkg/utils pkg/utils
 COPY pkg/webhooks pkg/webhooks
 
