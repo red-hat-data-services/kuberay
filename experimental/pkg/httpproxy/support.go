@@ -53,6 +53,8 @@ func modifyRequest(r *http.Request, upstream *url.URL) {
 	if err != nil {
 		klog.Info("failed reading request body ", err)
 	}
-	defer r.Body.Close()
+	defer func(body io.ReadCloser) {
+		_ = body.Close()
+	}(r.Body)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 }
