@@ -168,7 +168,7 @@ kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 ENVTEST = $(LOCALBIN)/setup-envtest
 $(ENVTEST): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest locally if necessary.
-	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20240201105228-4000e996a202
+	test -s $(ENVTEST) || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.21
 
 GOFUMPT = $(LOCALBIN)/gofumpt
 $(GOFUMPT): $(LOCALBIN)
@@ -179,7 +179,7 @@ CRD_REF_DOCS = $(LOCALBIN)/crd-ref-docs
 $(CRD_REF_DOCS): $(LOCALBIN)
 .PHONY: crd-ref-docs
 crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
-	test -s $(CRD_REF_DOCS) || GOBIN=$(LOCALBIN) go install github.com/elastic/crd-ref-docs@v0.0.12
+	test -s $(CRD_REF_DOCS) || GOBIN=$(LOCALBIN) go install github.com/elastic/crd-ref-docs@v0.2.0
 
 .PHONY: clean
 clean:
