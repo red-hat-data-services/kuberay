@@ -1,0 +1,83 @@
+# Notify ray-module-operator when operator config changes land on main.
+# Dispatches a repository_dispatch event so the downstream repo can sync
+# its manifests from the updated config/.
+
+name: Notify ray-module-operator
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ray-operator/config/**'
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.MANIFESTS_SYNC_APP_ID }}
+          private-key: ${{ secrets.MANIFESTS_SYNC_APP_PRIVATE_KEY }}
+          owner: opendatahub-io
+          repositories: ray-module-operator
+
+      - name: Dispatch kuberay-downstream-update event
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          max_attempts=3
+          for attempt in $(seq 1 $max_attempts); do
+            backoff=$((attempt * 10))
+            echo "Attempt $attempt of $max_attempts ..."
+
+            # Prevent set -e from aborting the step on curl transport failures
+            # (DNS, TLS, or timeout errors).
+            set +e
+            http_code=$(curl -s -o /tmp/dispatch_response.txt -w '%{http_code}' \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/opendatahub-io/ray-module-operator/dispatches" \
+              -d '{
+                "event_type": "kuberay-downstream-update",
+                "client_payload": {
+                  "repository": "'"${GITHUB_REPOSITORY}"'",
+                  "sha": "'"${GITHUB_SHA}"'",
+                  "ref": "'"${GITHUB_REF_NAME}"'",
+                  "base_branch": "main",
+                  "source_sha": "'"${GITHUB_SHA}"'"
+                }
+              }')
+            curl_exit=$?
+            set -e
+
+            # Handle curl transport failures (DNS, TLS, timeout)
+            if [[ $curl_exit -ne 0 ]]; then
+              echo "curl transport error (exit code $curl_exit)"
+            elif [[ "$http_code" == "204" || "$http_code" == "200" ]]; then
+              echo "Dispatch succeeded (HTTP $http_code)"
+              exit 0
+            else
+              echo "Dispatch failed (HTTP $http_code):"
+              cat /tmp/dispatch_response.txt
+              echo ""
+            fi
+
+            if [[ $attempt -lt $max_attempts ]]; then
+              echo "Retrying in ${backoff}s ..."
+              sleep "$backoff"
+            fi
+          done
+
+          echo "All $max_attempts attempts failed"
+          exit 1
